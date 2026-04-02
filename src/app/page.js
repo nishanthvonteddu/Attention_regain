@@ -31,6 +31,8 @@ Interleaving keeps attention awake. Mixing architecture, behavioral preparation,
 const PREVIEW_DECK = {
   documentTitle: "Preview Study Feed",
   goal: "see how the scroll format mixes quick reading with active recall",
+  generationMode: "preview",
+  model: "preview",
   focusTags: ["Retrieval", "Spacing", "Transfer", "Attention"],
   stats: {
     estimatedMinutes: 6,
@@ -222,7 +224,11 @@ export default function Home() {
         setFeedback({});
       });
       setStatusMessage(
-        "Feed ready. The point is to keep the easy scrolling motion while staying inside the material.",
+        payload.generationMode === "ai"
+          ? `Feed ready from ${payload.model}. The cards are now generated from the source instead of the local heuristic path.`
+          : payload.warning
+            ? `Fallback feed ready. ${payload.warning}`
+            : "Feed ready. The cards were generated with the local fallback path because no live model key is configured.",
       );
     } catch (caughtError) {
       setError(
@@ -438,6 +444,15 @@ export default function Home() {
                 <p>
                   {visibleDeck.stats.cardCount} cards from {visibleDeck.stats.chunkCount} passages
                 </p>
+                {visibleDeck.model ? (
+                  <p style={{ marginTop: 8 }}>
+                    {visibleDeck.generationMode === "ai"
+                      ? `Model: ${visibleDeck.model}`
+                      : visibleDeck.generationMode === "fallback"
+                        ? "Mode: heuristic fallback"
+                        : "Mode: preview"}
+                  </p>
+                ) : null}
               </div>
             </div>
 
