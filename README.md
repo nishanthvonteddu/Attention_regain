@@ -25,6 +25,18 @@ pnpm dev
 
 Then open [http://localhost:3000](http://localhost:3000).
 
+## NVIDIA API Setup
+
+To enable live AI card generation, create a local `.env.local` file with:
+
+```bash
+NVIDIA_API_KEY=your_key_here
+# Optional:
+NVIDIA_MODEL=openai/gpt-oss-20b
+```
+
+The app now uses NVIDIA's OpenAI-compatible chat completions endpoint and falls back to the local heuristic generator if the key is missing or the request fails.
+
 ## File Layout
 
 - `package.json`
