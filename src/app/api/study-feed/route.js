@@ -5,6 +5,8 @@ export const runtime = "nodejs";
 const MAX_FILE_SIZE = 12 * 1024 * 1024;
 const MAX_SOURCE_CHARS = 80_000;
 const MAX_PASSAGES = 8;
+const NVIDIA_API_URL = "https://integrate.api.nvidia.com/v1/chat/completions";
+const NVIDIA_MODEL = process.env.NVIDIA_MODEL || "openai/gpt-oss-20b";
 
 const STOP_WORDS = new Set([
   "about",
@@ -101,21 +103,75 @@ export async function POST(request) {
       text: sanitize(page.text),
     })) : createPseudoPages(sourceText);
     const passages = createPassages(pages);
-    const cards = createCards(passages, goal);
     const wordCount = sourceText.split(/\s+/).filter(Boolean).length;
-
-    return Response.json({
+    const baseDeck = {
       documentTitle: resolvedTitle || "Untitled study source",
       goal,
       sourceKind,
-      focusTags: collectFocusTags(passages),
-      cards,
       stats: {
         estimatedMinutes: Math.max(4, Math.round(wordCount / 180)),
-        cardCount: cards.length,
         chunkCount: passages.length,
       },
-    });
+    };
+
+    if (!passages.length) {
+      return Response.json(
+        { error: "The source did not produce enough readable passages to build cards." },
+        { status: 400 },
+      );
+    }
+
+    if (!process.env.NVIDIA_API_KEY) {
+      const fallbackCards = createCards(passages, goal);
+      return Response.json({
+        ...baseDeck,
+        focusTags: collectFocusTags(passages),
+        cards: fallbackCards,
+        generationMode: "fallback",
+        model: "heuristic-fallback",
+        stats: {
+          ...baseDeck.stats,
+          cardCount: fallbackCards.length,
+        },
+      });
+    }
+
+    try {
+      const aiDeck = await generateDeckWithNvidia({
+        documentTitle: baseDeck.documentTitle,
+        goal,
+        passages,
+      });
+
+      return Response.json({
+        ...baseDeck,
+        focusTags: aiDeck.focusTags,
+        cards: aiDeck.cards,
+        generationMode: "ai",
+        model: NVIDIA_MODEL,
+        stats: {
+          ...baseDeck.stats,
+          cardCount: aiDeck.cards.length,
+        },
+      });
+    } catch (generationError) {
+      const fallbackCards = createCards(passages, goal);
+      return Response.json({
+        ...baseDeck,
+        focusTags: collectFocusTags(passages),
+        cards: fallbackCards,
+        generationMode: "fallback",
+        model: generationError instanceof Error ? `fallback-after-${NVIDIA_MODEL}` : "heuristic-fallback",
+        warning:
+          generationError instanceof Error
+            ? generationError.message
+            : "The NVIDIA generation request failed, so the heuristic fallback was used.",
+        stats: {
+          ...baseDeck.stats,
+          cardCount: fallbackCards.length,
+        },
+      });
+    }
   } catch (error) {
     return Response.json(
       {
@@ -169,6 +225,107 @@ async function extractPdf(file, title) {
   } finally {
     await parser.destroy();
   }
+}
+
+async function generateDeckWithNvidia({ documentTitle, goal, passages }) {
+  const prompt = buildGenerationPrompt({ documentTitle, goal, passages });
+  const response = await fetch(NVIDIA_API_URL, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${process.env.NVIDIA_API_KEY}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      model: NVIDIA_MODEL,
+      temperature: 0.2,
+      max_tokens: 2400,
+      response_format: { type: "json_object" },
+      messages: [
+        {
+          role: "system",
+          content:
+            "You generate grounded study cards from source material. Return valid JSON only. Never invent facts outside the provided passages. Every card must cite one of the given passage citations.",
+        },
+        {
+          role: "user",
+          content: prompt,
+        },
+      ],
+    }),
+  });
+
+  const payload = await response.json();
+  if (!response.ok) {
+    throw new Error(
+      payload?.error?.message ||
+        payload?.error ||
+        "The NVIDIA chat completion request failed.",
+    );
+  }
+
+  const rawContent =
+    payload?.choices?.[0]?.message?.content ||
+    payload?.choices?.[0]?.text ||
+    "";
+  const parsed = parseModelJson(rawContent);
+  const cards = normalizeCards(parsed.cards, passages);
+
+  if (!cards.length) {
+    throw new Error("The model response did not contain valid study cards.");
+  }
+
+  return {
+    focusTags: normalizeTags(parsed.focusTags, passages),
+    cards,
+  };
+}
+
+function buildGenerationPrompt({ documentTitle, goal, passages }) {
+  const passageText = passages
+    .map((passage, index) => {
+      return [
+        `Passage ${index + 1}`,
+        `Citation: ${passage.citation}`,
+        `Topics: ${passage.topics.join(", ") || "None"}`,
+        `Text: ${passage.text}`,
+      ].join("\n");
+    })
+    .join("\n\n---\n\n");
+
+  return [
+    `Document title: ${documentTitle}`,
+    `Study goal: ${goal}`,
+    "",
+    "Using only the passages below, create a mobile-friendly study feed.",
+    "",
+    "Return a JSON object with this exact shape:",
+    "{",
+    '  "focusTags": ["tag1", "tag2", "tag3", "tag4"],',
+    '  "cards": [',
+    "    {",
+    '      "kind": "glance | recall | application | pitfall",',
+    '      "title": "short card title",',
+    '      "body": "1 to 2 concise sentences",',
+    '      "question": "optional prompt for recall/application/pitfall",',
+    '      "answer": "optional answer for recall/application/pitfall",',
+    '      "excerpt": "short grounded excerpt from the passage",',
+    '      "citation": "must match one of the given citations exactly"',
+    "    }",
+    "  ]",
+    "}",
+    "",
+    "Rules:",
+    "- Create 10 to 14 cards.",
+    "- Use a mix of glance, recall, application, and pitfall cards.",
+    "- Keep the cards useful for quick scrolling, not long essays.",
+    "- Every card must stay grounded in the provided passages.",
+    "- Never cite anything except the provided citations.",
+    "- Keep titles under 70 characters.",
+    "- Keep excerpts short and verbatim-friendly, but do not overquote.",
+    "",
+    "Passages:",
+    passageText,
+  ].join("\n");
 }
 
 function sanitize(text) {
@@ -307,6 +464,74 @@ function createCards(passages, goal) {
   });
 
   return cards.slice(0, 16);
+}
+
+function parseModelJson(content) {
+  if (typeof content !== "string" || !content.trim()) {
+    throw new Error("The model returned an empty response.");
+  }
+
+  const normalized = content
+    .trim()
+    .replace(/^```json\s*/i, "")
+    .replace(/^```\s*/i, "")
+    .replace(/\s*```$/, "");
+
+  return JSON.parse(normalized);
+}
+
+function normalizeTags(tags, passages) {
+  if (!Array.isArray(tags)) {
+    return collectFocusTags(passages);
+  }
+
+  const normalized = tags
+    .map((tag) => String(tag || "").trim())
+    .filter(Boolean)
+    .slice(0, 4);
+
+  return normalized.length ? normalized : collectFocusTags(passages);
+}
+
+function normalizeCards(cards, passages) {
+  if (!Array.isArray(cards)) {
+    return [];
+  }
+
+  const validKinds = new Set(["glance", "recall", "application", "pitfall"]);
+  const validCitations = new Set(passages.map((passage) => passage.citation));
+
+  return cards
+    .map((card, index) => {
+      const citation = String(card?.citation || "").trim();
+      if (!validCitations.has(citation)) {
+        return null;
+      }
+
+      const kind = validKinds.has(card?.kind) ? card.kind : "glance";
+      const title = trimText(String(card?.title || "").trim(), 70);
+      const body = trimText(String(card?.body || "").trim(), 240);
+      const excerpt = trimText(String(card?.excerpt || "").trim(), 170);
+      const question = trimText(String(card?.question || "").trim(), 220);
+      const answer = trimText(String(card?.answer || "").trim(), 220);
+
+      if (!title || !body || !excerpt) {
+        return null;
+      }
+
+      return {
+        id: `card-${index + 1}`,
+        kind,
+        title,
+        body,
+        question: question || undefined,
+        answer: answer || undefined,
+        excerpt,
+        citation,
+      };
+    })
+    .filter(Boolean)
+    .slice(0, 16);
 }
 
 function createGlanceCard(passage, index) {
