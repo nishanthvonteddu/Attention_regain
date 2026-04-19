@@ -3,6 +3,7 @@ import test from "node:test";
 
 import {
   buildCognitoHostedUiUrl,
+  buildCognitoLogoutUrl,
   getCognitoAuthReport,
   toClientAuthConfig,
 } from "../src/lib/auth/config.js";
@@ -53,11 +54,52 @@ test("hosted UI url builder uses the configured callback path", () => {
   const url = buildCognitoHostedUiUrl({
     auth,
     origin: "http://localhost:3000",
+    state: "/app",
   });
 
   assert.ok(url);
   assert.match(url, /oauth2\/authorize/);
   assert.match(url, /redirect_uri=http%3A%2F%2Flocalhost%3A3000%2Fauth%2Fcallback/);
+  assert.match(url, /state=%2Fapp/);
+});
+
+test("hosted UI builder preserves the protected post-login path in state", () => {
+  const auth = toClientAuthConfig(
+    getCognitoAuthReport({
+      AWS_REGION: "us-east-1",
+      AWS_COGNITO_USER_POOL_ID: "pool-id",
+      AWS_COGNITO_CLIENT_ID: "client-id",
+      AWS_COGNITO_DOMAIN: "attention-regain.auth.us-east-1.amazoncognito.com",
+    }),
+  );
+
+  const url = buildCognitoHostedUiUrl({
+    auth,
+    origin: "http://localhost:3000",
+    state: "/app",
+  });
+
+  assert.ok(url);
+  assert.match(url, /state=%2Fapp/);
+});
+
+test("logout url builder returns the public-home redirect target", () => {
+  const auth = toClientAuthConfig(
+    getCognitoAuthReport({
+      AWS_REGION: "us-east-1",
+      AWS_COGNITO_USER_POOL_ID: "pool-id",
+      AWS_COGNITO_CLIENT_ID: "client-id",
+      AWS_COGNITO_DOMAIN: "attention-regain.auth.us-east-1.amazoncognito.com",
+    }),
+  );
+
+  const url = buildCognitoLogoutUrl({
+    auth,
+    origin: "http://localhost:3000",
+  });
+
+  assert.ok(url);
+  assert.match(url, /logout_uri=http%3A%2F%2Flocalhost%3A3000%2F/);
 });
 
 test("serialized product sessions round-trip through the shell cookie boundary", () => {
