@@ -151,6 +151,7 @@ export function buildCognitoHostedUiUrl({
   origin,
   prompt = "login",
   redirectPath,
+  state,
 } = {}) {
   if (!auth?.configured || !hasValue(origin) || !auth.client.hostedUiDomain) {
     return null;
@@ -170,6 +171,9 @@ export function buildCognitoHostedUiUrl({
   authorizeUrl.searchParams.set("scope", "openid email profile");
   authorizeUrl.searchParams.set("redirect_uri", callbackTarget);
   authorizeUrl.searchParams.set("prompt", prompt);
+  if (hasValue(state)) {
+    authorizeUrl.searchParams.set("state", state.trim());
+  }
 
   return authorizeUrl.toString();
 }
