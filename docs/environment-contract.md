@@ -55,6 +55,8 @@ These variables must stay server-side. They are consumed by API routes, backgrou
 - Keep `.env.local` local only. The repository tracks `.env.example` and ignores real `.env*` files.
 - Public configuration is limited to presentation or non-sensitive feature flags.
 - Model keys, AWS identifiers, and database credentials remain server-only.
+- The browser receives only the client-safe auth subset from `toClientAuthConfig()`.
+- The protected study route (`/app`) and `POST /api/study-feed` now require a valid server-issued product session cookie.
 - The auth shell passes only a client-safe Cognito subset into React: region, app client id, Hosted UI domain, and route paths.
 - The product shell never stores Cognito tokens in `localStorage`; Day 02 uses a server-issued session cookie boundary instead.
 
