@@ -8,6 +8,8 @@ import {
   useTransition,
 } from "react";
 
+import { useAuthShell } from "../components/auth-shell-provider.js";
+
 const STORAGE_KEY = "attention-regain-session-v2";
 
 const SAMPLE_SOURCE = {
@@ -112,6 +114,7 @@ const TONE = {
 };
 
 export default function Home() {
+  const { auth, shell } = useAuthShell();
   const [title, setTitle] = useState("");
   const [goal, setGoal] = useState("");
   const [sourceText, setSourceText] = useState("");
@@ -332,6 +335,13 @@ export default function Home() {
             <p className="eyebrow">Session status</p>
             <p>{statusMessage}</p>
             {error ? <div className="error">{error}</div> : null}
+            <p className="field-label" style={{ marginTop: 18 }}>
+              Auth shell
+            </p>
+            <p>
+              <strong>{shell.label}.</strong> {shell.description}
+            </p>
+            {auth.warnings[0] ? <p>{auth.warnings[0]}</p> : null}
           </div>
 
           <form className="form-grid" onSubmit={handleGenerate}>
@@ -421,8 +431,12 @@ export default function Home() {
               <em>Required</em>
             </div>
             <div className="rule-row">
-              <span>Browser-only session persistence</span>
-              <em>Local</em>
+              <span>Auth shell boundary</span>
+              <em>{shell.authLabel}</em>
+            </div>
+            <div className="rule-row">
+              <span>Session persistence boundary</span>
+              <em>{shell.persistenceLabel}</em>
             </div>
           </div>
         </div>
