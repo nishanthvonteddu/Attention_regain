@@ -2,5 +2,11 @@ node_modules
 .next
 .DS_Store
 dist
+.env
+.env.*
+.envrc
+.direnv
+.vercel
 .env.local
 .env.*.local
+!.env.example
