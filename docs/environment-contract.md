@@ -39,6 +39,12 @@ These variables must stay server-side. They are consumed by API routes, backgrou
 | `AWS_S3_BUCKET_DOCUMENTS` | No | `ENABLE_AWS_SERVICES=true` | Private document bucket. |
 | `AWS_COGNITO_USER_POOL_ID` | No | `ENABLE_AWS_SERVICES=true` | Cognito user pool for sign-in. |
 | `AWS_COGNITO_CLIENT_ID` | No | `ENABLE_AWS_SERVICES=true` | Cognito app client id. |
+| `AWS_COGNITO_DOMAIN` | No | `ENABLE_AWS_SERVICES=true` | Cognito Hosted UI domain used for sign-in and sign-out redirects. |
+| `AUTH_CALLBACK_PATH` | No | Never | App route that will exchange the Cognito callback for a server-issued session cookie. Defaults to `/auth/callback`. |
+| `AUTH_SIGN_OUT_PATH` | No | Never | App route reserved for clearing the session and initiating Cognito logout. Defaults to `/auth/sign-out`. |
+| `AUTH_PROTECTED_HOME_PATH` | No | Never | Intended signed-in landing route for the product shell. Defaults to `/app`. |
+| `AUTH_PUBLIC_HOME_PATH` | No | Never | Anonymous landing route after sign-out. Defaults to `/`. |
+| `AUTH_SESSION_COOKIE_NAME` | No | Never | Server-issued session cookie name used by the product shell boundary. Defaults to `attention_regain_session`. |
 | `QUEUE_URL_DOCUMENT_PROCESSING` | No | `ENABLE_AWS_SERVICES=true` | Queue url for background document processing. |
 | `ENABLE_DATABASE` | No | Never | Enables database validation before persistence work begins. |
 | `DATABASE_URL` | No | `ENABLE_DATABASE=true` | Server-only database connection string. |
@@ -49,6 +55,10 @@ These variables must stay server-side. They are consumed by API routes, backgrou
 - Keep `.env.local` local only. The repository tracks `.env.example` and ignores real `.env*` files.
 - Public configuration is limited to presentation or non-sensitive feature flags.
 - Model keys, AWS identifiers, and database credentials remain server-only.
+- The browser receives only the client-safe auth subset from `toClientAuthConfig()`.
+- The protected study route (`/app`) and `POST /api/study-feed` now require a valid server-issued product session cookie.
+- The auth shell passes only a client-safe Cognito subset into React: region, app client id, Hosted UI domain, and route paths.
+- The product shell never stores Cognito tokens in `localStorage`; Day 02 uses a server-issued session cookie boundary instead.
 
 ## Validation Strategy
 
@@ -73,3 +83,5 @@ The Day 1 validation contract has two layers:
   - expected result: no failure during the local MVP phase
 - Missing AWS or database settings after those feature flags are enabled:
   - expected result: validation failure before merge or deployment
+- Partial Cognito scaffold values while `ENABLE_AWS_SERVICES=false`:
+  - expected result: local preview mode with an explicit warning instead of a silent half-configured auth shell

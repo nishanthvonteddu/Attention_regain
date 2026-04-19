@@ -1,4 +1,6 @@
 import "./globals.css";
+import { AuthShellProvider } from "../components/auth-shell-provider.js";
+import { getServerProductShellBootstrap } from "../lib/auth/session.server.js";
 
 export const metadata = {
   title: "Attention Regain",
@@ -13,10 +15,16 @@ export const viewport = {
   themeColor: "#15120f",
 };
 
-export default function RootLayout({ children }) {
+export default async function RootLayout({ children }) {
+  const { auth, session } = await getServerProductShellBootstrap();
+
   return (
     <html lang="en">
-      <body>{children}</body>
+      <body>
+        <AuthShellProvider initialAuth={auth} initialSession={session}>
+          {children}
+        </AuthShellProvider>
+      </body>
     </html>
   );
 }

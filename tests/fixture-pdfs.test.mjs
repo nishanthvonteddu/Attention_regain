@@ -3,6 +3,11 @@ import path from "node:path";
 import { access, readFile } from "node:fs/promises";
 import test from "node:test";
 
+import {
+  createAuthenticatedProductSession,
+  serializeProductSession,
+} from "../src/lib/auth/session-shared.js";
+
 const FIXTURES = [
   "/Users/work/Downloads/AIAYN.pdf",
   "/Users/work/Downloads/SAM.pdf",
@@ -35,6 +40,14 @@ test("local PDF fixtures generate grounded fallback decks when available", async
   delete process.env.NVIDIA_API_KEY;
 
   const { POST } = await import("../src/app/api/study-feed/route.js");
+  const sessionCookie = serializeProductSession(
+    createAuthenticatedProductSession({
+      userId: "local-reader",
+      email: "reader@example.com",
+      displayName: "Focused Reader",
+      source: "fixture-test",
+    }),
+  );
 
   try {
     for (const fixture of available) {
@@ -52,6 +65,9 @@ test("local PDF fixtures generate grounded fallback decks when available", async
           new Request("http://localhost/api/study-feed", {
             method: "POST",
             body: formData,
+            headers: {
+              cookie: `attention_regain_session=${sessionCookie}`,
+            },
           }),
         );
         const payload = await response.json();
