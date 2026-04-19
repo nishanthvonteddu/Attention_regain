@@ -1,3 +1,5 @@
+import { AUTH_ENV_CONTRACT } from "./auth/config.js";
+
 const TRUE_VALUES = new Set(["1", "true", "yes", "on"]);
 
 const DEFAULT_TEXT_MODEL = "meta/llama-3.1-70b-instruct";
@@ -94,6 +96,7 @@ export const ENV_CONTRACT = [
     name: "AWS_COGNITO_CLIENT_ID",
     scope: "server",
   },
+  ...AUTH_ENV_CONTRACT,
   {
     name: "QUEUE_URL_DOCUMENT_PROCESSING",
     scope: "server",
@@ -195,6 +198,7 @@ export function getEnvironmentReport(env = process.env) {
       "AWS_S3_BUCKET_DOCUMENTS",
       "AWS_COGNITO_USER_POOL_ID",
       "AWS_COGNITO_CLIENT_ID",
+      "AWS_COGNITO_DOMAIN",
       "QUEUE_URL_DOCUMENT_PROCESSING",
     ]);
     if (missing.length) {
