@@ -1,4 +1,5 @@
 import { PDFParse } from "pdf-parse";
+import { getEnvironmentReport } from "../../../lib/env.js";
 
 export const runtime = "nodejs";
 
@@ -6,7 +7,6 @@ const MAX_FILE_SIZE = 12 * 1024 * 1024;
 const MAX_SOURCE_CHARS = 80_000;
 const MAX_PASSAGES = 8;
 const NVIDIA_API_URL = "https://integrate.api.nvidia.com/v1/chat/completions";
-const NVIDIA_MODEL = process.env.NVIDIA_MODEL || "openai/gpt-oss-20b";
 
 const STOP_WORDS = new Set([
   "about",
@@ -121,7 +121,8 @@ export async function POST(request) {
       );
     }
 
-    if (!process.env.NVIDIA_API_KEY) {
+    const environment = getEnvironmentReport();
+    if (!environment.generation.enabled) {
       const fallbackCards = createCards(passages, goal);
       return Response.json({
         ...baseDeck,
@@ -129,6 +130,9 @@ export async function POST(request) {
         cards: fallbackCards,
         generationMode: "fallback",
         model: "heuristic-fallback",
+        warning: environment.generation.explicitlyEnabled
+          ? environment.generation.issues.join(" ")
+          : undefined,
         stats: {
           ...baseDeck.stats,
           cardCount: fallbackCards.length,
@@ -141,6 +145,8 @@ export async function POST(request) {
         documentTitle: baseDeck.documentTitle,
         goal,
         passages,
+        apiKey: environment.generation.apiKey,
+        model: environment.generation.model,
       });
 
       return Response.json({
@@ -148,7 +154,7 @@ export async function POST(request) {
         focusTags: aiDeck.focusTags,
         cards: aiDeck.cards,
         generationMode: "ai",
-        model: NVIDIA_MODEL,
+        model: environment.generation.model,
         stats: {
           ...baseDeck.stats,
           cardCount: aiDeck.cards.length,
@@ -161,7 +167,10 @@ export async function POST(request) {
         focusTags: collectFocusTags(passages),
         cards: fallbackCards,
         generationMode: "fallback",
-        model: generationError instanceof Error ? `fallback-after-${NVIDIA_MODEL}` : "heuristic-fallback",
+        model:
+          generationError instanceof Error
+            ? `fallback-after-${environment.generation.model}`
+            : "heuristic-fallback",
         warning:
           generationError instanceof Error
             ? generationError.message
@@ -227,16 +236,16 @@ async function extractPdf(file, title) {
   }
 }
 
-async function generateDeckWithNvidia({ documentTitle, goal, passages }) {
+async function generateDeckWithNvidia({ documentTitle, goal, passages, apiKey, model }) {
   const prompt = buildGenerationPrompt({ documentTitle, goal, passages });
   const response = await fetch(NVIDIA_API_URL, {
     method: "POST",
     headers: {
-      Authorization: `Bearer ${process.env.NVIDIA_API_KEY}`,
+      Authorization: `Bearer ${apiKey}`,
       "Content-Type": "application/json",
     },
     body: JSON.stringify({
-      model: NVIDIA_MODEL,
+      model,
       temperature: 0.2,
       max_tokens: 2400,
       response_format: { type: "json_object" },
