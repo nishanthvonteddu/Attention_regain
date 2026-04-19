@@ -19,7 +19,9 @@ The input is a paper, notes, or another reading source. The output is a mobile-f
 ## Local Run
 
 ```bash
+cp .env.example .env.local
 pnpm install
+bash scripts/check.sh
 pnpm dev
 ```
 
@@ -30,17 +32,31 @@ Then open [http://localhost:3000](http://localhost:3000).
 Use the repository scripts below as the canonical local validation entrypoints:
 
 ```bash
-zsh scripts/lint.sh
-zsh scripts/build.sh
-zsh scripts/test.sh
-zsh scripts/check.sh
+bash scripts/lint.sh
+bash scripts/build.sh
+bash scripts/test.sh
+bash scripts/check.sh
 ```
 
-`scripts/check.sh` runs the full local delivery sequence in the same order expected for a review branch.
+`scripts/check.sh` runs environment validation, repository hygiene checks, the production build, and the automated tests in the same order expected for a review branch.
 
 ## Delivery Workflow
 
-Daily milestone work ships on review branches named `codex/day-XX-<slug>`, never directly on `main`. The full branch, review, and merge rules live in [docs/delivery-workflow.md](./docs/delivery-workflow.md).
+Daily milestone work ships on review branches named `day-<number>/<slug>`, never directly on `main`. The full branch, review, and merge rules live in [docs/delivery-workflow.md](./docs/delivery-workflow.md).
+
+## Environment Contract
+
+The current local and planned MVP configuration contract lives in [docs/environment-contract.md](./docs/environment-contract.md). Copy [.env.example](./.env.example) to `.env.local` and add only the keys needed for the features you are actively using.
+
+The current runtime behavior is explicit:
+
+- if no live generation key is configured, the app uses the local heuristic fallback
+- if live generation is enabled but misconfigured, the app falls back with a warning instead of failing silently
+- future AWS and database settings stay disabled until those features are turned on
+
+## Local Setup And Release
+
+Contributor bootstrap steps, AWS inventory assumptions, and the review-branch release flow live in [docs/setup-and-release.md](./docs/setup-and-release.md).
 
 ## NVIDIA API Setup
 
