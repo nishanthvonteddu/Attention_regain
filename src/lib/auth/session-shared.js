@@ -84,29 +84,29 @@ export function readSerializedProductSession(value) {
 export function getProductShellState({ auth, session }) {
   if (isAuthenticatedProductSession(session)) {
     return {
-      label: "Signed in",
+      label: "Private app unlocked",
       description:
-        "The shell is using an account-bound session. Protected routes can now rely on a server-issued session cookie instead of browser-local state.",
+        "The shell is using a server-issued session cookie. Protected routes now resolve against an authenticated product boundary instead of anonymous browser state.",
       persistenceLabel: "Account-bound session",
-      authLabel: "Cognito session active",
+      authLabel: "Authenticated route boundary",
     };
   }
 
   if (auth?.configured) {
     return {
-      label: "Cognito scaffold ready",
+      label: "Sign in required",
       description:
-        "Cognito config, callback assumptions, and the server/client session boundary are in place. Day 02.2 will connect the real sign-in and protected route flow.",
-      persistenceLabel: "Browser-local until sign-in ships",
-      authLabel: "Hosted UI wiring defined",
+        "The Hosted UI wiring is configured, but the user still needs a valid session before the private study workspace should open.",
+      persistenceLabel: "Anonymous preview only",
+      authLabel: "Hosted UI start route ready",
     };
   }
 
   return {
-    label: "Local preview mode",
+    label: "Local sign-in ready",
     description:
-      "The app still runs as an anonymous preview because Cognito is not fully configured. The shell keeps browser-local persistence and does not assume a signed-in user.",
-    persistenceLabel: "Browser-local session",
-    authLabel: "Cognito config incomplete",
+      "Cognito is not fully configured yet, so the shell exposes a local preview sign-in to exercise the protected route boundary during the single-user MVP phase.",
+    persistenceLabel: "Server cookie after local sign-in",
+    authLabel: "Local preview auth enabled",
   };
 }
