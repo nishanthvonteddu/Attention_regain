@@ -25,6 +25,23 @@ pnpm dev
 
 Then open [http://localhost:3000](http://localhost:3000).
 
+## Validation Scripts
+
+Use the repository scripts below as the canonical local validation entrypoints:
+
+```bash
+zsh scripts/lint.sh
+zsh scripts/build.sh
+zsh scripts/test.sh
+zsh scripts/check.sh
+```
+
+`scripts/check.sh` runs the full local delivery sequence in the same order expected for a review branch.
+
+## Delivery Workflow
+
+Daily milestone work ships on review branches named `codex/day-XX-<slug>`, never directly on `main`. The full branch, review, and merge rules live in [docs/delivery-workflow.md](./docs/delivery-workflow.md).
+
 ## NVIDIA API Setup
 
 To enable live AI card generation, create a local `.env.local` file with:
