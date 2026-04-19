@@ -3,7 +3,6 @@
   "private": true,
   "version": "0.1.0",
   "scripts": {
-    "preflight:mvp": "bash ./scripts/mvp-preflight.sh",
     "dev": "next dev",
     "build": "next build",
     "start": "next start"
