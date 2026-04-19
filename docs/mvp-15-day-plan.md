@@ -1,383 +1,334 @@
 # Attention Regain MVP Plan
 
-## Current Phase
+## Current Project State
 
-The project is currently in the `functional POC` phase.
+The project is currently at `functional POC`.
 
 What already exists:
 
-- single-page Next.js app
-- upload or paste source flow
-- PDF text extraction
-- generated study feed
-- NVIDIA-backed live generation path with fallback
-- browser-local session state
+- `Next.js` app shell
+- source intake with pasted text and PDF upload
+- PDF text extraction path
+- study feed UI
+- NVIDIA-backed generation path with fallback
+- browser-local session persistence
 
-What is missing for MVP:
+What still needs to be built for MVP:
 
-- auth
+- AWS-backed auth
 - persistent backend data model
-- private file storage
-- background generation
-- real study history and progress loop
-- operational logging and rate limiting
-- AWS deployment
+- private S3 document storage
+- queued background processing
+- grounded document retrieval pipeline
+- resumable study history and progress loops
+- operational logging, rate limiting, and CI hardening
+- AWS deployment and smoke-tested release flow
 
-## MVP Target
+## MVP Outcome
 
-By Day 15, the app should support this real user flow:
+By Day 15, the app should support this production-intended flow:
 
 1. user signs in
 2. user uploads a private exam-prep document
 3. file is stored privately in S3
-4. document is parsed and queued for generation
-5. user gets a grounded study feed with citations
-6. user can save cards, mark weak cards, and come back later
-7. user can see progress on the document
-8. app is deployed on AWS and usable outside local dev
+4. parsing and generation happen through a queued backend flow
+5. user receives a grounded feed with citations
+6. user can save, review again, and lock cards
+7. user can come back later and resume progress
+8. the app runs outside local development on AWS
+
+## Execution Rules
+
+- target user: `exam prep`
+- target inputs: `PDF` and `pasted text`
+- target outputs: `grounded study cards`
+- every generated card must include a citation reference
+- creative wording is allowed, invented facts are not
+- every document must be resumable
+- daily work ships to a review branch, not directly to `main`
 
 ## Recommended MVP Stack
 
-Use this as the default build path unless you want to override it:
-
-- frontend and app server: `Next.js`
+- web app and server: `Next.js`
 - auth: `Amazon Cognito`
-- file storage: `Amazon S3` with private buckets only
-- primary app database: `Postgres` on AWS
-- background queue: `Amazon SQS`
-- background workers: `AWS Lambda` or a small worker service
-- deployment: `AWS Amplify Hosting` for the web app, or `App Runner` if you prefer a container path
-- document parsing: normal PDF text extraction first, OCR only as fallback
-- AI provider: user-provided
+- database: `Postgres on AWS`
+- file storage: `Amazon S3`
+- queue: `Amazon SQS`
+- worker: `AWS Lambda` or a small worker service
+- deployment: `AWS Amplify Hosting` or `AWS App Runner`
+- parsing: text PDF first, OCR as explicit fallback
+- model provider: user-provided
 
-`Postgres` is recommended instead of `DynamoDB` for the MVP because document state, cards, user actions, and progress history are relational and easier to query cleanly.
+## Day-By-Day Build Plan
 
-## Product Rules
+### Day 1: Project foundation, environment, and CI setup
 
-- target user: `exam prep`
-- target input: `PDF and pasted text`
-- target output: `grounded study cards`
-- every card must cite the source section or page
-- creative phrasing is fine, invented facts are not
-- every session must be resumable
+Objective:
+Establish the execution baseline so the next 14 days can move without setup churn.
 
-## Day-by-Day Plan
+Scope:
 
-### Day 1: Lock MVP scope and backend contracts
+- finalize repo standards and branch workflow
+- add environment contract and validation plan
+- define required AWS resource inventory
+- add CI pipeline for lint, build, and test validation
+- add baseline docs for local setup, validation, and release workflow
 
-- Freeze the MVP scope around `exam prep only`
-- Define the database entities
-- Define the API contracts between UI, parser, generator, and progress system
-- Decide the AWS deployment path
+Definition of done:
 
-Subtasks:
+- project setup decisions are documented
+- local bootstrap flow is clear
+- CI runs the required checks
+- environment variables and ownership are defined
 
-- write the canonical MVP scope
-- define tables for users, documents, chunks, cards, sessions, interactions
-- define statuses for documents: `uploaded`, `processing`, `ready`, `failed`
-- define statuses for cards: `new`, `saved`, `review`, `locked`
-- decide whether deployment is `Amplify Hosting` or `App Runner`
+### Day 2: Auth boundary and protected app shell
 
-Deliverable:
+Objective:
+Move the app from anonymous local usage into an authenticated product shell.
 
-- stable technical blueprint and schema draft
+Scope:
 
-### Day 2: Auth and environment foundation
+- wire Cognito integration points
+- build sign-in and sign-out flow
+- protect private routes and document ownership boundaries
+- add auth-aware loading and failure states
 
-- Integrate Cognito
-- Add environment validation
-- Separate server-only secrets from client config
+Definition of done:
 
-Subtasks:
+- auth shell works end to end
+- private product routes are protected
+- anonymous users cannot access saved study data
 
-- configure Cognito user pool and app client
-- add sign-in and sign-out flow
-- protect private routes
-- add env validation for AWS, model, and database settings
-- add `.env.example`
+### Day 3: Persistent data layer and migrations
 
-Deliverable:
+Objective:
+Replace browser-only persistence with a real backend data model.
 
-- authenticated app shell with safe config loading
+Scope:
 
-### Day 3: Persistent backend data layer
+- connect `Postgres`
+- create schema and migrations
+- add data access layer for documents, chunks, cards, sessions, and interactions
+- persist document and session state
 
-- Add the real database layer
-- Move away from browser-only persistence
+Definition of done:
 
-Subtasks:
+- core data model is stored in the database
+- migrations are committed
+- persistence no longer depends on browser-only state
 
-- connect Postgres
-- create migrations
-- create repository or service functions for documents, cards, sessions, interactions
-- store document metadata and processing state
+### Day 4: Private S3 upload pipeline
 
-Deliverable:
+Objective:
+Move document storage into private AWS infrastructure.
 
-- database-backed document records
+Scope:
 
-### Day 4: Private upload pipeline
+- add private S3 upload flow
+- persist object metadata
+- validate file type, file size, and empty uploads
+- bind every document to an authenticated owner
 
-- Move uploads into private S3
-- Keep files inaccessible from public URLs
+Definition of done:
 
-Subtasks:
+- documents upload into private S3
+- invalid uploads fail cleanly
+- stored objects are traceable to the document record
 
-- create S3 upload path by user and document id
-- generate secure upload flow
-- save object key and metadata in database
-- add size and file-type validation
-- reject empty files and unsupported files
+### Day 5: Reliable PDF parsing and source references
 
-Deliverable:
+Objective:
+Make normal text PDFs parse reliably and preserve source structure.
 
-- private file upload flow working end to end
+Scope:
 
-### Day 5: Reliable document parsing
-
-- Make PDF parsing robust for normal text PDFs
-- Add fallback rules for failures
-
-Subtasks:
-
-- parse text PDFs on the server or worker side
-- detect empty parse results
-- detect likely scanned PDFs
-- mark OCR-required documents separately instead of silently failing
+- parse text PDFs in the backend flow
 - store extracted text and per-page references
+- detect empty or low-signal parse results
+- identify likely OCR-needed documents
 
-Deliverable:
+Definition of done:
 
-- stable parsing for normal PDFs with explicit failure states
+- normal PDFs parse successfully
+- citations can point to page-level references
+- failure states are explicit
 
-### Day 6: Background generation pipeline
+### Day 6: Background queue and worker pipeline
 
-- Remove fragile request-time generation
-- Queue generation work
+Objective:
+Stop doing fragile request-time processing and move work into a queue.
 
-Subtasks:
+Scope:
 
-- add SQS queue for document processing
+- add queue contract with `SQS`
 - create worker entry point
-- move chunking and generation into the worker
-- update document processing status in database
-- add retry limits and dead-letter handling
+- move parsing and generation orchestration into async processing
+- add processing status transitions, retries, and dead-letter behavior
 
-Deliverable:
+Definition of done:
 
-- queued processing instead of blocking UI requests
+- uploads trigger queued work
+- UI reflects background progress
+- failed jobs are visible and retryable
 
-### Day 7: Source chunking and retrieval baseline
+### Day 7: Chunking and retrieval baseline
 
-- Add a stable chunking strategy
-- Keep every generated card tied to retrievable source passages
+Objective:
+Create a stable grounding layer for long-document generation.
 
-Subtasks:
+Scope:
 
-- chunk by page and paragraph first
-- add section-aware chunk boundaries where possible
-- cap chunk length for generation stability
-- store chunk citation data
-- add simple retrieval for long documents
+- chunk by page and paragraph
+- normalize chunk sizes for generation stability
+- store citation metadata on every chunk
+- add a simple retrieval strategy for long documents
 
-Recommended MVP chunking strategy:
+Definition of done:
 
-- first split by `page`
-- then split by `paragraph`
-- then merge or re-split to a target size of roughly `400 to 900 words`
-- preserve `page number`, `section label`, and `chunk order`
+- large documents are chunked consistently
+- retrieval can select relevant chunks for generation
+- chunk metadata is citation-ready
 
-Deliverable:
+### Day 8: Grounded generation hardening
 
-- chunk store with citations and retrieval-ready structure
+Objective:
+Make model output predictable, valid, and safe to persist.
 
-### Day 8: Grounded card generation hardening
+Scope:
 
-- Make the model output predictable and safe to use
+- enforce strict JSON response contract
+- validate and reject malformed cards
+- require citations on every saved card
+- make generation failures visible to the user
 
-Subtasks:
+Definition of done:
 
-- enforce strict JSON output
-- validate card schema before save
-- reject uncited cards
-- reject cards with empty body or bad kind
-- attach chunk references to every card
-- add fallback generation behavior if the model fails
+- generated cards are schema-valid
+- uncited cards are rejected
+- model failures do not corrupt document state
 
-Recommended fallback:
+### Day 9: Feed persistence and comeback-later flow
 
-- if model call fails, mark document `generation_failed`
-- surface retry option to user
-- optionally use heuristic fallback only for internal testing, not silent production behavior
+Objective:
+Make the study experience resumable across sessions.
 
-Deliverable:
+Scope:
 
-- validated AI output saved into the database
-
-### Day 9: Feed persistence and resume flow
-
-- Make the study feed resumable
-- Let users return to the same document later
-
-Subtasks:
-
-- load ready cards from the database
+- load cards from the database
 - persist user interactions per card
-- reopen last active study session
-- show processing and failed states cleanly
+- restore last active document and session
+- handle processing and failure states in the feed UI
 
-Deliverable:
+Definition of done:
 
-- true comeback-later experience
+- users can leave and come back later
+- session state persists server-side
+- feed status is accurate for ready, processing, and failed documents
 
 ### Day 10: Progress loop and learning actions
 
-- Add the first real learning loop
+Objective:
+Turn the feed into a real study loop instead of passive scrolling.
 
-Subtasks:
+Scope:
 
 - persist `save`, `review again`, and `locked in`
-- track completion percent by document
-- track weak cards and saved cards
-- show a session summary
+- compute progress by document
+- surface weak-card and saved-card counts
 - define resurfacing rules for weak cards
 
-Recommended resurfacing logic:
+Definition of done:
 
-- `review again` cards reappear first in the next session
-- `saved` cards remain pinned to a review bucket
-- `locked in` cards are shown less often
+- core learning actions are durable
+- progress is measurable
+- weak cards can be intentionally resurfaced
 
-Deliverable:
+### Day 11: OCR fallback and failure recovery
 
-- measurable progress loop
+Objective:
+Handle the scanned-PDF edge case without silent failure.
 
-### Day 11: OCR fallback and failure handling
+Scope:
 
-- Handle the non-text PDF edge case
-- Make failures explicit instead of mysterious
+- add OCR routing contract
+- mark OCR-needed documents explicitly
+- add recovery states and retry controls
+- surface parse and OCR failures clearly in the UI
 
-Subtasks:
+Definition of done:
 
-- add OCR fallback path for scanned PDFs
-- add timeout handling
-- add user-facing failure messages
-- log parse failures and model failures
+- scanned files move into an explicit fallback path
+- users understand what failed and what to retry
+- OCR-ready records are distinguishable from normal parse records
 
-Recommendation:
+### Day 12: Security, privacy, and abuse controls
 
-- do not start with OCR as the default parser
-- use OCR only when normal extraction returns near-empty text
+Objective:
+Harden the MVP so user documents stay private and misuse is bounded.
 
-Deliverable:
+Scope:
 
-- resilient ingestion pipeline
+- enforce document ownership checks
+- keep S3 objects private
+- add rate limiting and basic abuse controls
+- review secrets handling and security headers
 
-### Day 12: Security and privacy hardening
+Definition of done:
 
-- Tighten the MVP before public usage
-
-Subtasks:
-
-- confirm S3 buckets are private
-- confirm secrets remain server-side only
-- validate auth on all document endpoints
-- add rate limits on upload and generation
-- add ownership checks on every document fetch
-
-Deliverable:
-
-- private-by-default document flow
+- cross-user document access is blocked
+- secrets remain server-side
+- baseline abuse controls are active
 
 ### Day 13: Observability and cost tracking
 
-- Track whether the app is healthy and affordable
+Objective:
+Make the product operable in practice.
 
-Subtasks:
+Scope:
 
-- log uploads, parse jobs, generation jobs, failures, retries
-- track time to first feed
-- track model cost per document
-- add basic dashboard or admin query path
+- log uploads, parses, generations, retries, and failures
+- measure time to first feed
+- estimate or record model cost per document
+- provide a minimal operational visibility surface
 
-Minimum metrics:
+Definition of done:
 
-- uploads started
-- uploads failed
-- parse success rate
-- generation success rate
-- average processing time
-- average cost per document
+- critical product events are traceable
+- cost per document is measurable
+- latency to first feed is visible
 
-Deliverable:
+### Day 14: Full MVP validation and frontend hardening
 
-- basic operational visibility
+Objective:
+Run the product like a release candidate and fix what breaks.
 
-### Day 14: Full MVP testing
+Scope:
 
-- Test the complete user journey
+- run end-to-end happy-path and failure-path validation
+- harden mobile and desktop UI behavior
+- clean up major accessibility and UX regressions
+- make CI gating match release expectations
 
-Subtasks:
+Definition of done:
 
-- happy-path test for upload to feed
-- bad PDF test
-- empty file test
-- timeout test
-- auth boundary test
-- resume session test
-- rate limit test
-- manual visual QA for mobile and desktop
+- critical flows pass validation
+- top frontend regressions are resolved
+- CI reflects the final release bar
 
-Deliverable:
+### Day 15: AWS deployment and release readiness
 
-- full MVP test pass list and fixed blockers
+Objective:
+Ship the MVP outside local development and lock the first releasable version.
 
-### Day 15: AWS deployment and release checklist
+Scope:
 
-- Deploy the usable MVP
-- freeze the first release scope
+- deploy the web app and backend dependencies to AWS
+- configure production environment variables
+- validate auth callbacks, storage access, queue processing, and database connectivity
+- run production smoke tests and release checks
 
-Subtasks:
+Definition of done:
 
-- deploy app to AWS
-- configure production env vars
-- verify Cognito callback URLs
-- verify S3 permissions
-- verify queue and worker wiring
-- run smoke test in production
-- create release checklist and rollback notes
-
-Deliverable:
-
-- publicly usable MVP environment
-
-## What I Need From You
-
-To execute this plan without blockers, get me these:
-
-1. AWS region choice
-2. AWS deployment choice: `Amplify Hosting` or `App Runner`
-3. AWS database choice approval: `Postgres`
-4. Cognito details or permission to create them
-5. S3 bucket names or permission to create them
-6. Queue choice approval: `SQS`
-7. OCR choice: `AWS Textract`, `Tesseract`, or another provider
-8. model provider and API key
-9. budget guardrails per day or per month
-10. whether you want task tracking as:
-   - markdown in repo only
-   - GitHub issues
-   - both
-
-## Definition Of Done
-
-This project counts as MVP only when all of these are true:
-
-- user can authenticate
-- upload stays private
-- documents are stored and processed reliably
-- generation is grounded and validated
-- users can come back later
-- progress and weak-card review work
-- failures are visible and recoverable
-- app runs on AWS outside local dev
+- the MVP is live on AWS
+- core smoke tests pass in production
+- rollback notes and release checklist exist
