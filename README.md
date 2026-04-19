@@ -58,3 +58,7 @@ This version is intentionally narrow:
 - no cross-document retrieval
 
 That keeps the validation question clear: if the user is about to open a distraction app, is this feed easy enough to open instead while still reinforcing the material?
+
+## Execution Plan
+
+The current MVP build-out plan lives in [docs/mvp-15-day-plan.md](./docs/mvp-15-day-plan.md).
