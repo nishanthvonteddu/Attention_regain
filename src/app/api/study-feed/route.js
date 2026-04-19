@@ -1,5 +1,6 @@
 import { PDFParse } from "pdf-parse";
 import { getEnvironmentReport } from "../../../lib/env.js";
+import { requestHasAuthenticatedSession } from "../../../lib/auth/session.server.js";
 
 export const runtime = "nodejs";
 
@@ -62,6 +63,13 @@ const STOP_WORDS = new Set([
 
 export async function POST(request) {
   try {
+    if (!requestHasAuthenticatedSession(request.headers.get("cookie"))) {
+      return Response.json(
+        { error: "Sign in before generating a private study feed." },
+        { status: 401 },
+      );
+    }
+
     const formData = await request.formData();
     const title = String(formData.get("title") || "").trim();
     const goal =
