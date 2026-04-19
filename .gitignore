@@ -10,3 +10,4 @@ dist
 .env.local
 .env.*.local
 !.env.example
+.playwright-cli
