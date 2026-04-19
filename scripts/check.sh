@@ -1,6 +1,7 @@
-#!/usr/bin/env zsh
+#!/usr/bin/env bash
 set -euo pipefail
 cd "$(dirname "$0")/.."
-zsh scripts/lint.sh
-zsh scripts/build.sh
-zsh scripts/test.sh
+node scripts/validate-env.mjs --mode=local
+bash scripts/lint.sh
+bash scripts/build.sh
+bash scripts/test.sh
