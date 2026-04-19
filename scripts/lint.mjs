@@ -2,9 +2,9 @@ import { readFile, readdir } from "node:fs/promises";
 import path from "node:path";
 
 const ROOT = process.cwd();
-const DIRECTORIES = ["src", "docs", "scripts", "tests"];
-const ROOT_FILES = ["README.md", "package.json"];
-const TEXT_EXTENSIONS = new Set([".css", ".js", ".json", ".md", ".mjs"]);
+const DIRECTORIES = [".github", "src", "docs", "scripts", "tests"];
+const ROOT_FILES = [".env.example", "README.md", "package.json"];
+const TEXT_EXTENSIONS = new Set([".css", ".js", ".json", ".md", ".mjs", ".sh", ".yml"]);
 const REQUIRED_SCRIPT_FILES = [
   "scripts/lint.sh",
   "scripts/build.sh",
