@@ -1,6 +1,10 @@
 import { PDFParse } from "pdf-parse";
 import { getEnvironmentReport } from "../../../lib/env.js";
-import { requestHasAuthenticatedSession } from "../../../lib/auth/session.server.js";
+import {
+  readProductSessionFromCookieHeader,
+  requestHasAuthenticatedSession,
+} from "../../../lib/auth/session.server.js";
+import { getDefaultStudyRepository } from "../../../lib/data/repositories.js";
 
 export const runtime = "nodejs";
 
@@ -63,11 +67,15 @@ const STOP_WORDS = new Set([
 
 export async function POST(request) {
   try {
+    const session = readProductSessionFromCookieHeader(request.headers.get("cookie"));
     if (!requestHasAuthenticatedSession(request.headers.get("cookie"))) {
       return Response.json(
         { error: "Sign in before generating a private study feed." },
         { status: 401 },
       );
+    }
+    if (!requestHasSameOrigin(request)) {
+      return Response.json({ error: "Study feed writes must be same-origin." }, { status: 403 });
     }
 
     const formData = await request.formData();
@@ -132,7 +140,7 @@ export async function POST(request) {
     const environment = getEnvironmentReport();
     if (!environment.generation.enabled) {
       const fallbackCards = createCards(passages, goal);
-      return Response.json({
+      const payload = {
         ...baseDeck,
         focusTags: collectFocusTags(passages),
         cards: fallbackCards,
@@ -145,7 +153,8 @@ export async function POST(request) {
           ...baseDeck.stats,
           cardCount: fallbackCards.length,
         },
-      });
+      };
+      return Response.json(await persistDeck({ payload, passages, session }));
     }
 
     try {
@@ -157,7 +166,7 @@ export async function POST(request) {
         model: environment.generation.model,
       });
 
-      return Response.json({
+      const payload = {
         ...baseDeck,
         focusTags: aiDeck.focusTags,
         cards: aiDeck.cards,
@@ -167,10 +176,11 @@ export async function POST(request) {
           ...baseDeck.stats,
           cardCount: aiDeck.cards.length,
         },
-      });
+      };
+      return Response.json(await persistDeck({ payload, passages, session }));
     } catch (generationError) {
       const fallbackCards = createCards(passages, goal);
-      return Response.json({
+      const payload = {
         ...baseDeck,
         focusTags: collectFocusTags(passages),
         cards: fallbackCards,
@@ -187,7 +197,8 @@ export async function POST(request) {
           ...baseDeck.stats,
           cardCount: fallbackCards.length,
         },
-      });
+      };
+      return Response.json(await persistDeck({ payload, passages, session }));
     }
   } catch (error) {
     return Response.json(
@@ -200,6 +211,109 @@ export async function POST(request) {
       { status: 500 },
     );
   }
+}
+
+export async function GET(request) {
+  try {
+    const session = readProductSessionFromCookieHeader(request.headers.get("cookie"));
+    if (!requestHasAuthenticatedSession(request.headers.get("cookie"))) {
+      return Response.json(
+        { error: "Sign in before loading a private study feed." },
+        { status: 401 },
+      );
+    }
+
+    const deck = await getDefaultStudyRepository().getLatestDeckForUser(session.user.id);
+    if (!deck) {
+      return Response.json({ deck: null });
+    }
+
+    return Response.json({ deck });
+  } catch (error) {
+    return Response.json(
+      {
+        error:
+          error instanceof Error
+            ? error.message
+            : "Could not load the persisted study feed.",
+      },
+      { status: 500 },
+    );
+  }
+}
+
+export async function PATCH(request) {
+  try {
+    const session = readProductSessionFromCookieHeader(request.headers.get("cookie"));
+    if (!requestHasAuthenticatedSession(request.headers.get("cookie"))) {
+      return Response.json(
+        { error: "Sign in before saving study interactions." },
+        { status: 401 },
+      );
+    }
+    if (!requestHasSameOrigin(request)) {
+      return Response.json(
+        { error: "Study interaction writes must be same-origin." },
+        { status: 403 },
+      );
+    }
+
+    const payload = await request.json();
+    const interaction = await getDefaultStudyRepository().recordInteraction({
+      userId: session.user.id,
+      sessionId: String(payload.sessionId || ""),
+      cardId: String(payload.cardId || ""),
+      interactionType: String(payload.interactionType || ""),
+      value: typeof payload.value === "string" ? payload.value : JSON.stringify(payload.value ?? ""),
+    });
+
+    return Response.json({ interaction });
+  } catch (error) {
+    return Response.json(
+      {
+        error:
+          error instanceof Error
+            ? error.message
+            : "Could not save the study interaction.",
+      },
+      { status: 400 },
+    );
+  }
+}
+
+function requestHasSameOrigin(request) {
+  const origin = request.headers.get("origin");
+  if (!origin) {
+    return true;
+  }
+
+  try {
+    return new URL(origin).origin === new URL(request.url).origin;
+  } catch {
+    return false;
+  }
+}
+
+async function persistDeck({ payload, passages, session }) {
+  const persisted = await getDefaultStudyRepository().saveGeneratedDeck({
+    user: session.user,
+    documentTitle: payload.documentTitle,
+    goal: payload.goal,
+    sourceKind: payload.sourceKind,
+    sourceRef: payload.documentTitle,
+    passages,
+    focusTags: payload.focusTags,
+    cards: payload.cards,
+    generationMode: payload.generationMode,
+    model: payload.model,
+    stats: payload.stats,
+  });
+
+  return {
+    ...payload,
+    ...persisted,
+    warning: payload.warning,
+  };
 }
 
 async function extractFile(file) {
