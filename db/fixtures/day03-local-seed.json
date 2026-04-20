@@ -1,0 +1,132 @@
+{
+  "users": [
+    {
+      "id": "local-reader",
+      "email": "reader@example.com",
+      "displayName": "Focused Reader",
+      "createdAt": "2026-04-20T00:00:00.000Z",
+      "updatedAt": "2026-04-20T00:00:00.000Z"
+    }
+  ],
+  "documents": [
+    {
+      "id": "doc-local-seed",
+      "userId": "local-reader",
+      "title": "Seeded Focus Source",
+      "sourceKind": "pdf",
+      "sourceRef": "fixture://day03-local-seed.pdf",
+      "goal": "validate backend persistence",
+      "status": "cards_generated",
+      "contentHash": "seeded",
+      "wordCount": 52,
+      "createdAt": "2026-04-20T00:00:00.000Z",
+      "updatedAt": "2026-04-20T00:00:00.000Z",
+      "parsedAt": "2026-04-20T00:00:00.000Z",
+      "failedAt": null,
+      "failureReason": ""
+    }
+  ],
+  "documentChunks": [
+    {
+      "id": "chunk-local-seed-1",
+      "documentId": "doc-local-seed",
+      "sequence": 0,
+      "citation": "Page 1",
+      "text": "Retrieval practice forces the learner to reconstruct the idea before rereading.",
+      "topics": ["Retrieval", "Practice"],
+      "tokenEstimate": 12,
+      "embeddingStatus": "pending",
+      "embeddingProvider": "",
+      "embeddingModel": "",
+      "createdAt": "2026-04-20T00:00:00.000Z"
+    },
+    {
+      "id": "chunk-local-seed-2",
+      "documentId": "doc-local-seed",
+      "sequence": 1,
+      "citation": "Page 2",
+      "text": "Spacing makes weak recall visible because the source no longer feels freshly familiar.",
+      "topics": ["Spacing", "Recall"],
+      "tokenEstimate": 12,
+      "embeddingStatus": "pending",
+      "embeddingProvider": "",
+      "embeddingModel": "",
+      "createdAt": "2026-04-20T00:00:00.000Z"
+    }
+  ],
+  "studySessions": [
+    {
+      "id": "session-local-seed",
+      "userId": "local-reader",
+      "documentId": "doc-local-seed",
+      "goal": "validate backend persistence",
+      "status": "ready",
+      "generationMode": "fallback",
+      "model": "heuristic-fallback",
+      "focusTags": ["Retrieval", "Spacing"],
+      "stats": {
+        "estimatedMinutes": 4,
+        "chunkCount": 2,
+        "cardCount": 2
+      },
+      "createdAt": "2026-04-20T00:00:00.000Z",
+      "updatedAt": "2026-04-20T00:00:00.000Z",
+      "readyAt": "2026-04-20T00:00:00.000Z",
+      "failedAt": null,
+      "failureReason": ""
+    }
+  ],
+  "studyCards": [
+    {
+      "id": "card-local-seed-1",
+      "sessionId": "session-local-seed",
+      "documentId": "doc-local-seed",
+      "chunkId": "chunk-local-seed-1",
+      "sequence": 0,
+      "kind": "recall",
+      "status": "active",
+      "title": "Reconstruct before rereading",
+      "body": "Recall should happen before the source is visible again.",
+      "question": "What does retrieval practice force?",
+      "answer": "It forces reconstruction before rereading.",
+      "excerpt": "Retrieval practice forces the learner to reconstruct the idea before rereading.",
+      "citation": "Page 1",
+      "createdAt": "2026-04-20T00:00:00.000Z",
+      "updatedAt": "2026-04-20T00:00:00.000Z"
+    },
+    {
+      "id": "card-local-seed-2",
+      "sessionId": "session-local-seed",
+      "documentId": "doc-local-seed",
+      "chunkId": "chunk-local-seed-2",
+      "sequence": 1,
+      "kind": "pitfall",
+      "status": "saved",
+      "title": "Familiarity can hide weak recall",
+      "body": "The session should expose whether the learner can recover the idea later.",
+      "question": "What does spacing reveal?",
+      "answer": "It reveals whether recall is still available after fluency fades.",
+      "excerpt": "Spacing makes weak recall visible because the source no longer feels freshly familiar.",
+      "citation": "Page 2",
+      "createdAt": "2026-04-20T00:00:00.000Z",
+      "updatedAt": "2026-04-20T00:00:00.000Z"
+    }
+  ],
+  "studyInteractions": [
+    {
+      "id": "interaction-local-seed-1",
+      "userId": "local-reader",
+      "sessionId": "session-local-seed",
+      "cardId": "card-local-seed-1",
+      "interactionType": "reveal_answer",
+      "value": "true",
+      "createdAt": "2026-04-20T00:00:00.000Z"
+    }
+  ],
+  "migrations": [
+    {
+      "id": "0001_core_schema",
+      "appliedAt": "2026-04-20T00:00:00.000Z"
+    }
+  ]
+}
