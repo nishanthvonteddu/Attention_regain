@@ -91,6 +91,38 @@ export function StudyWorkspace() {
     }
   }, [storageKey]);
 
+  useEffect(() => {
+    let cancelled = false;
+
+    async function loadServerSession() {
+      try {
+        const response = await fetch("/api/study-feed", { method: "GET" });
+        if (!response.ok) {
+          return;
+        }
+        const payload = await response.json();
+        if (cancelled || !payload.deck) {
+          return;
+        }
+
+        startTransition(() => {
+          setDeck(payload.deck);
+          setFeedback({});
+        });
+        setTitle(payload.deck.documentTitle || "");
+        setGoal(payload.deck.goal || "");
+        setStatusMessage("Private study session restored from server persistence.");
+      } catch {
+        // Browser storage remains a local fallback if the server adapter is unavailable.
+      }
+    }
+
+    loadServerSession();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
   const persistSession = useEffectEvent((nextDeck, nextFeedback) => {
     window.localStorage.setItem(
       storageKey,
@@ -227,16 +259,19 @@ export function StudyWorkspace() {
         revealed: !(current[cardId]?.revealed || false),
       },
     }));
+    persistInteraction(cardId, "reveal_answer", "true");
   }
 
   function toggleSave(cardId) {
+    const nextSaved = !(feedback[cardId]?.saved || false);
     setFeedback((current) => ({
       ...current,
       [cardId]: {
         ...(current[cardId] || EMPTY_FEEDBACK),
-        saved: !(current[cardId]?.saved || false),
+        saved: nextSaved,
       },
     }));
+    persistInteraction(cardId, nextSaved ? "save_card" : "unsave_card", String(nextSaved));
   }
 
   function setConfidence(cardId, confidence) {
@@ -247,6 +282,30 @@ export function StudyWorkspace() {
         confidence,
       },
     }));
+    persistInteraction(cardId, "set_confidence", confidence);
+  }
+
+  async function persistInteraction(cardId, interactionType, value) {
+    if (!deck?.sessionId) {
+      return;
+    }
+
+    try {
+      await fetch("/api/study-feed", {
+        method: "PATCH",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          sessionId: deck.sessionId,
+          cardId,
+          interactionType,
+          value,
+        }),
+      });
+    } catch {
+      // The immediate UI state is optimistic; failed writes can be retried in a later sync pass.
+    }
   }
 
   const busy = isSubmitting || isPending;

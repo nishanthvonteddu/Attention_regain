@@ -11,3 +11,4 @@ dist
 .env.*.local
 !.env.example
 .playwright-cli
+.data
