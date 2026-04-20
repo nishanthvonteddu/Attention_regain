@@ -109,6 +109,10 @@ export const ENV_CONTRACT = [
     name: "DATABASE_URL",
     scope: "server",
   },
+  {
+    name: "ATTENTION_REGAIN_DATA_DIR",
+    scope: "server",
+  },
 ];
 
 export function parseBoolean(value, fallback = false) {
