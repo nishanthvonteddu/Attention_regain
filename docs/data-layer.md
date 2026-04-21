@@ -35,6 +35,20 @@ Fields:
 - `created_at`, `updated_at`, `parsed_at`, `failed_at`
 - `failure_reason`
 
+### document_uploads
+
+Tracks private S3 upload metadata for a document before parsing. Upload rows are
+owned by the same user as the document and store bucket, object key, object URI,
+original file name, content type, byte size, upload mode, and lifecycle
+timestamps.
+
+Statuses:
+
+- `ready` after the server creates an owner-bound upload handshake.
+- `uploaded` after the browser confirms the object reached private storage.
+- `consumed` after study feed generation stores cards against that document.
+- `failed` when upload confirmation or later processing cannot continue.
+
 ### document_chunks
 
 Stores normalized source slices used for retrieval and grounded generation.
@@ -104,6 +118,13 @@ Migration `0001_core_schema.sql` creates:
 - `study_interactions`
 - lookup check constraints and indexes for owner-scoped queries
 
+Migration `0002_document_uploads.sql` creates:
+
+- `document_uploads`
+- owner and document foreign keys
+- unique S3 bucket/object-key traceability
+- upload lifecycle indexes for owner-scoped queries
+
 Rollout order:
 
 1. Create owner table and document tables.
@@ -112,10 +133,12 @@ Rollout order:
 4. Create cards after sessions and chunks.
 5. Create interactions after sessions and cards.
 6. Add indexes for user dashboards, latest session lookup, and source retrieval.
+7. Add upload metadata after the core document table exists.
 
 Rollback expectation: Day 03 migrations are reversible before production data is
 loaded. After real user data exists, rollback should be a forward migration that
-preserves user rows, documents, chunks, cards, sessions, and interactions.
+preserves user rows, documents, upload metadata, chunks, cards, sessions, and
+interactions.
 
 ## Repository Boundaries
 
