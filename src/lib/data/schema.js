@@ -13,6 +13,12 @@ export const DOCUMENT_STATUSES = Object.freeze([
 ]);
 export const SESSION_STATUSES = Object.freeze(["building", "ready", "archived", "failed"]);
 export const CARD_STATUSES = Object.freeze(["active", "saved", "dismissed"]);
+export const UPLOAD_STATUSES = Object.freeze([
+  "ready",
+  "uploaded",
+  "consumed",
+  "failed",
+]);
 export const INTERACTION_TYPES = Object.freeze([
   "reveal_answer",
   "save_card",
@@ -26,6 +32,7 @@ const STATUS_SETS = {
   document: new Set(DOCUMENT_STATUSES),
   session: new Set(SESSION_STATUSES),
   card: new Set(CARD_STATUSES),
+  upload: new Set(UPLOAD_STATUSES),
   interaction: new Set(INTERACTION_TYPES),
 };
 
@@ -63,6 +70,7 @@ export function normalizeJsonStore(input = {}) {
     version: DATA_MODEL_VERSION,
     users: Array.isArray(input.users) ? input.users : [],
     documents: Array.isArray(input.documents) ? input.documents : [],
+    documentUploads: Array.isArray(input.documentUploads) ? input.documentUploads : [],
     documentChunks: Array.isArray(input.documentChunks) ? input.documentChunks : [],
     studySessions: Array.isArray(input.studySessions) ? input.studySessions : [],
     studyCards: Array.isArray(input.studyCards) ? input.studyCards : [],

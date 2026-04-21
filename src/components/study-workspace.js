@@ -11,6 +11,7 @@ import {
 
 import { useAuthShell } from "./auth-shell-provider.js";
 import { PREVIEW_DECK, SAMPLE_SOURCE } from "../lib/study-preview.js";
+import { MAX_UPLOAD_BYTES, validateUploadDescriptor } from "../lib/uploads/validation.js";
 
 const STORAGE_KEY_PREFIX = "attention-regain-session-v3";
 
@@ -51,6 +52,7 @@ export function StudyWorkspace() {
   const [sourceText, setSourceText] = useState("");
   const [file, setFile] = useState(null);
   const [fileName, setFileName] = useState("");
+  const [uploadStatus, setUploadStatus] = useState(null);
   const [deck, setDeck] = useState(null);
   const [feedback, setFeedback] = useState({});
   const [error, setError] = useState("");
@@ -79,6 +81,7 @@ export function StudyWorkspace() {
       setGoal(parsed.goal || "");
       setSourceText(parsed.sourceText || "");
       setFileName(parsed.fileName || "");
+      setUploadStatus(parsed.uploadStatus || null);
       setDeck(parsed.deck || null);
       setFeedback(parsed.feedback || {});
       if (parsed.deck) {
@@ -131,6 +134,7 @@ export function StudyWorkspace() {
         goal,
         sourceText,
         fileName,
+        uploadStatus,
         deck: nextDeck,
         feedback: nextFeedback,
       }),
@@ -142,7 +146,18 @@ export function StudyWorkspace() {
       return;
     }
     persistSession(deck, feedback);
-  }, [deck, feedback, fileName, goal, hasLoadedStorage, persistSession, sourceText, storageKey, title]);
+  }, [
+    deck,
+    feedback,
+    fileName,
+    goal,
+    hasLoadedStorage,
+    persistSession,
+    sourceText,
+    storageKey,
+    title,
+    uploadStatus,
+  ]);
 
   const feedbackValues = Object.values(feedback);
   const sessionStats = {
@@ -165,14 +180,19 @@ export function StudyWorkspace() {
       setIsSubmitting(true);
       setStatusMessage(
         file
-          ? "Pulling text from the uploaded source and shaping the feed."
+          ? "Preparing a private upload record before shaping the feed."
           : "Breaking the source into passages and building study cards.",
       );
+
+      const upload = file ? await preparePrivateUpload(file) : null;
 
       const formData = new FormData();
       formData.set("title", title);
       formData.set("goal", goal);
       formData.set("sourceText", sourceText);
+      if (upload?.documentId) {
+        formData.set("uploadDocumentId", upload.documentId);
+      }
       if (file) {
         formData.set("file", file);
       }
@@ -216,6 +236,7 @@ export function StudyWorkspace() {
     setSourceText(SAMPLE_SOURCE.body);
     setFile(null);
     setFileName("");
+    setUploadStatus(null);
     setError("");
     setStatusMessage(
       "Sample reading loaded. Generate the feed to inspect the full protected-session workflow.",
@@ -228,6 +249,7 @@ export function StudyWorkspace() {
     setSourceText("");
     setFile(null);
     setFileName("");
+    setUploadStatus(null);
     setDeck(null);
     setFeedback({});
     setError("");
@@ -238,17 +260,109 @@ export function StudyWorkspace() {
   }
 
   function onFileChange(nextFile) {
-    setFile(nextFile);
-    setFileName(nextFile?.name || "");
     setError("");
+    setUploadStatus(null);
 
-    if (nextFile) {
-      setSourceText("");
-      if (!title.trim()) {
-        setTitle(nextFile.name.replace(/\.[^.]+$/, ""));
-      }
-      setStatusMessage(`${nextFile.name} attached. Generate the feed when ready.`);
+    if (!nextFile) {
+      setFile(null);
+      setFileName("");
+      return;
     }
+
+    const validation = validateUploadDescriptor({
+      fileName: nextFile.name,
+      contentType: nextFile.type,
+      sizeBytes: nextFile.size,
+    });
+    if (!validation.ok) {
+      setFile(null);
+      setFileName("");
+      setError(validation.message);
+      setStatusMessage("The selected file was rejected before upload.");
+      return;
+    }
+
+    setFile(nextFile);
+    setFileName(validation.descriptor.fileName);
+    setError("");
+    setUploadStatus({
+      label: "Ready for private upload",
+      detail: `${Math.ceil(validation.descriptor.sizeBytes / 1024)} KB, ${validation.descriptor.contentType}`,
+    });
+
+    setSourceText("");
+    if (!title.trim()) {
+      setTitle(validation.descriptor.fileName.replace(/\.[^.]+$/, ""));
+    }
+    setStatusMessage(`${validation.descriptor.fileName} attached. Generate the feed when ready.`);
+  }
+
+  async function preparePrivateUpload(nextFile) {
+    setUploadStatus({
+      label: "Preparing upload",
+      detail: "Creating an owner-bound private object key.",
+    });
+
+    const response = await fetch("/api/document-uploads", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        title,
+        goal,
+        fileName: nextFile.name,
+        contentType: nextFile.type,
+        sizeBytes: nextFile.size,
+      }),
+    });
+    const payload = await response.json();
+
+    if (!response.ok) {
+      throw new Error(payload.error || "Could not prepare the private upload.");
+    }
+
+    const upload = payload.upload;
+    if (upload.url) {
+      setUploadStatus({
+        label: "Uploading privately",
+        detail: "Sending the file to the owner-bound S3 object.",
+      });
+      const uploadResponse = await fetch(upload.url, {
+        method: "PUT",
+        headers: upload.requiredHeaders || {},
+        body: nextFile,
+      });
+      if (!uploadResponse.ok) {
+        throw new Error("S3 rejected the private upload.");
+      }
+    }
+
+    const confirmResponse = await fetch("/api/document-uploads", {
+      method: "PATCH",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        documentId: upload.documentId,
+      }),
+    });
+    const confirmed = await confirmResponse.json();
+    if (!confirmResponse.ok) {
+      throw new Error(confirmed.error || "Could not confirm the private upload.");
+    }
+
+    setUploadStatus({
+      label: "Upload metadata saved",
+      detail: upload.objectKey,
+    });
+    setStatusMessage(
+      upload.url
+        ? "Private S3 upload confirmed. Generating cards from the source."
+        : "Private upload metadata saved. Local parsing remains active until the S3 parser lands.",
+    );
+
+    return upload;
   }
 
   function toggleReveal(cardId) {
@@ -392,8 +506,8 @@ export function StudyWorkspace() {
               <label className="dropzone">
                 <strong>Drop a PDF or text file here</strong>
                 <span>
-                  Good for papers, chapters, and typed notes. This private route keeps
-                  the shell protected even while the MVP stays local-first.
+                  Good for papers, chapters, and typed notes up to {Math.round(MAX_UPLOAD_BYTES / 1024 / 1024)} MB.
+                  Uploads use owner-bound private object metadata before parsing.
                 </span>
                 <span className="chip-button">Choose file</span>
                 <input
@@ -413,6 +527,12 @@ export function StudyWorkspace() {
                   >
                     Remove
                   </button>
+                </div>
+              ) : null}
+              {uploadStatus ? (
+                <div className="upload-status">
+                  <strong>{uploadStatus.label}</strong>
+                  <span>{uploadStatus.detail}</span>
                 </div>
               ) : null}
             </div>
@@ -438,6 +558,14 @@ export function StudyWorkspace() {
             <div className="rule-row">
               <span>Grounded cards with citations</span>
               <em>Required</em>
+            </div>
+            <div className="rule-row">
+              <span>Private upload validation</span>
+              <em>PDF/TXT only</em>
+            </div>
+            <div className="rule-row">
+              <span>Object ownership</span>
+              <em>Account-bound</em>
             </div>
             <div className="rule-row">
               <span>Auth shell boundary</span>

@@ -10,6 +10,15 @@ import { createLocalJsonStore } from "./local-store.js";
 
 export function createStudyRepository({ store = createLocalJsonStore() } = {}) {
   return {
+    createDocumentUpload(input) {
+      return createDocumentUpload(store, input);
+    },
+    markDocumentUploadUploaded(input) {
+      return markDocumentUploadUploaded(store, input);
+    },
+    getDocumentUploadForUser(userId, documentId) {
+      return getDocumentUploadForUser(store, userId, documentId);
+    },
     saveGeneratedDeck(input) {
       return saveGeneratedDeck(store, input);
     },
@@ -29,6 +38,116 @@ export function getDefaultStudyRepository() {
   return createStudyRepository();
 }
 
+async function createDocumentUpload(store, input) {
+  const userId = requireNonEmpty(input.user?.id, "user.id");
+  const documentId = requireNonEmpty(input.documentId, "documentId");
+  const title = requireNonEmpty(input.title, "title");
+  const sourceKind = normalizeSourceKind(input.sourceKind);
+  const timestamp = nowIso();
+  const file = input.file && typeof input.file === "object" ? input.file : {};
+  const storage = input.storage && typeof input.storage === "object" ? input.storage : {};
+  const uploadRow = {
+    id: createPublicId("upload"),
+    userId,
+    documentId,
+    status: "ready",
+    provider: requireNonEmpty(storage.provider, "storage.provider"),
+    bucket: requireNonEmpty(storage.bucket, "storage.bucket"),
+    objectKey: requireNonEmpty(storage.objectKey, "storage.objectKey"),
+    objectUri: requireNonEmpty(storage.objectUri, "storage.objectUri"),
+    uploadMode: requireNonEmpty(storage.uploadMode, "storage.uploadMode"),
+    originalFileName: requireNonEmpty(file.fileName, "file.fileName"),
+    contentType: requireNonEmpty(file.contentType, "file.contentType"),
+    sizeBytes: requirePositiveInteger(file.sizeBytes, "file.sizeBytes"),
+    etag: "",
+    createdAt: timestamp,
+    updatedAt: timestamp,
+    expiresAt: storage.expiresAt || null,
+    uploadedAt: null,
+    consumedAt: null,
+    failedAt: null,
+    failureReason: "",
+  };
+  const documentRow = {
+    id: documentId,
+    userId,
+    title,
+    sourceKind,
+    sourceRef: uploadRow.objectUri,
+    goal: typeof input.goal === "string" && input.goal.trim()
+      ? input.goal.trim()
+      : "stay close to the material when attention slips",
+    status: "draft",
+    contentHash: "",
+    wordCount: 0,
+    createdAt: timestamp,
+    updatedAt: timestamp,
+    parsedAt: null,
+    failedAt: null,
+    failureReason: "",
+  };
+
+  await store.update((current) => ({
+    ...current,
+    users: upsertById(current.users, {
+      id: userId,
+      email: typeof input.user.email === "string" ? input.user.email : "",
+      displayName: typeof input.user.displayName === "string" ? input.user.displayName : "",
+      createdAt: timestamp,
+      updatedAt: timestamp,
+    }),
+    documents: [...current.documents, documentRow],
+    documentUploads: [...current.documentUploads, uploadRow],
+  }));
+
+  return uploadRow;
+}
+
+async function markDocumentUploadUploaded(store, input) {
+  const userId = requireNonEmpty(input.userId, "userId");
+  const documentId = requireNonEmpty(input.documentId, "documentId");
+  const timestamp = nowIso();
+  let updatedUpload = null;
+
+  await store.update((current) => {
+    const upload = current.documentUploads.find(
+      (entry) => entry.documentId === documentId && entry.userId === userId,
+    );
+    if (!upload) {
+      throw new Error("Document upload was not found for this user.");
+    }
+
+    updatedUpload = {
+      ...upload,
+      status: "uploaded",
+      etag: typeof input.etag === "string" ? input.etag : upload.etag,
+      updatedAt: timestamp,
+      uploadedAt: timestamp,
+    };
+
+    return {
+      ...current,
+      documents: current.documents.map((document) => document.id === documentId && document.userId === userId
+        ? { ...document, status: "uploaded", updatedAt: timestamp }
+        : document),
+      documentUploads: current.documentUploads.map((entry) =>
+        entry.id === upload.id ? updatedUpload : entry,
+      ),
+    };
+  });
+
+  return updatedUpload;
+}
+
+async function getDocumentUploadForUser(store, userId, documentId) {
+  const ownerId = requireNonEmpty(userId, "userId");
+  const targetDocumentId = requireNonEmpty(documentId, "documentId");
+  const current = await store.read();
+  return current.documentUploads.find(
+    (entry) => entry.userId === ownerId && entry.documentId === targetDocumentId,
+  ) || null;
+}
+
 async function saveGeneratedDeck(store, input) {
   const userId = requireNonEmpty(input.user?.id, "user.id");
   const title = requireNonEmpty(input.documentTitle, "documentTitle");
@@ -42,7 +161,11 @@ async function saveGeneratedDeck(store, input) {
   }
 
   const timestamp = nowIso();
-  const documentId = createPublicId("doc");
+  const requestedDocumentId =
+    typeof input.documentId === "string" && input.documentId.trim()
+      ? input.documentId.trim()
+      : "";
+  const documentId = requestedDocumentId || createPublicId("doc");
   const sessionId = createPublicId("session");
   const chunkRows = passages.map((passage, index) => {
     const text = String(passage.text || "");
@@ -95,18 +218,30 @@ async function saveGeneratedDeck(store, input) {
       createdAt: timestamp,
       updatedAt: timestamp,
     });
+    const existingDocument = requestedDocumentId
+      ? current.documents.find(
+          (entry) => entry.id === requestedDocumentId && entry.userId === userId,
+        )
+      : null;
+    if (requestedDocumentId && !existingDocument) {
+      throw new Error("Document upload was not found for this user.");
+    }
+
     const sourceText = passages.map((passage) => passage.text || "").join("\n\n");
     const documentRow = {
+      ...(existingDocument || {}),
       id: documentId,
       userId,
       title,
       sourceKind,
-      sourceRef: typeof input.sourceRef === "string" ? input.sourceRef : "",
+      sourceRef:
+        existingDocument?.sourceRef ||
+        (typeof input.sourceRef === "string" ? input.sourceRef : ""),
       goal,
       status: "cards_generated",
       contentHash: hashSourceText(sourceText),
       wordCount: sourceText.split(/\s+/).filter(Boolean).length,
-      createdAt: timestamp,
+      createdAt: existingDocument?.createdAt || timestamp,
       updatedAt: timestamp,
       parsedAt: timestamp,
       failedAt: null,
@@ -132,7 +267,17 @@ async function saveGeneratedDeck(store, input) {
     return {
       ...current,
       users: nextUsers,
-      documents: [...current.documents, documentRow],
+      documents: existingDocument
+        ? current.documents.map((document) => document.id === existingDocument.id
+          ? documentRow
+          : document)
+        : [...current.documents, documentRow],
+      documentUploads: markConsumedUploadRows(
+        current.documentUploads,
+        documentId,
+        userId,
+        timestamp,
+      ),
       documentChunks: [...current.documentChunks, ...chunkRows],
       studySessions: [...current.studySessions, sessionRow],
       studyCards: [...current.studyCards, ...cardRows],
@@ -289,9 +434,31 @@ function upsertById(rows, nextRow) {
     : row);
 }
 
+function markConsumedUploadRows(rows, documentId, userId, timestamp) {
+  return rows.map((row) => {
+    if (row.documentId !== documentId || row.userId !== userId) {
+      return row;
+    }
+
+    return {
+      ...row,
+      status: "consumed",
+      updatedAt: timestamp,
+      consumedAt: timestamp,
+    };
+  });
+}
+
 function requireNonEmpty(value, label) {
   if (typeof value !== "string" || !value.trim()) {
     throw new Error(`Missing required persistence field: ${label}`);
   }
   return value.trim();
+}
+
+function requirePositiveInteger(value, label) {
+  if (!Number.isSafeInteger(value) || value <= 0) {
+    throw new Error(`Missing required positive persistence field: ${label}`);
+  }
+  return value;
 }

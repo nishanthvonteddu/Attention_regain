@@ -89,6 +89,18 @@ export const ENV_CONTRACT = [
     scope: "server",
   },
   {
+    name: "AWS_ACCESS_KEY_ID",
+    scope: "server",
+  },
+  {
+    name: "AWS_SECRET_ACCESS_KEY",
+    scope: "server",
+  },
+  {
+    name: "AWS_SESSION_TOKEN",
+    scope: "server",
+  },
+  {
     name: "AWS_COGNITO_USER_POOL_ID",
     scope: "server",
   },
@@ -200,6 +212,8 @@ export function getEnvironmentReport(env = process.env) {
     const missing = missingKeys(env, [
       "AWS_REGION",
       "AWS_S3_BUCKET_DOCUMENTS",
+      "AWS_ACCESS_KEY_ID",
+      "AWS_SECRET_ACCESS_KEY",
       "AWS_COGNITO_USER_POOL_ID",
       "AWS_COGNITO_CLIENT_ID",
       "AWS_COGNITO_DOMAIN",

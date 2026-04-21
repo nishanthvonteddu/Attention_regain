@@ -4,11 +4,12 @@ import {
   readProductSessionFromCookieHeader,
   requestHasAuthenticatedSession,
 } from "../../../lib/auth/session.server.js";
+import { requestHasSameOrigin } from "../../../lib/auth/request.js";
 import { getDefaultStudyRepository } from "../../../lib/data/repositories.js";
+import { validateUploadDescriptor } from "../../../lib/uploads/validation.js";
 
 export const runtime = "nodejs";
 
-const MAX_FILE_SIZE = 12 * 1024 * 1024;
 const MAX_SOURCE_CHARS = 80_000;
 const MAX_PASSAGES = 8;
 const NVIDIA_API_URL = "https://integrate.api.nvidia.com/v1/chat/completions";
@@ -68,6 +69,7 @@ const STOP_WORDS = new Set([
 export async function POST(request) {
   try {
     const session = readProductSessionFromCookieHeader(request.headers.get("cookie"));
+    const repository = getDefaultStudyRepository();
     if (!requestHasAuthenticatedSession(request.headers.get("cookie"))) {
       return Response.json(
         { error: "Sign in before generating a private study feed." },
@@ -85,16 +87,32 @@ export async function POST(request) {
       "stay close to the material when attention slips";
     const pastedText = String(formData.get("sourceText") || "");
     const uploaded = formData.get("file");
+    const uploadDocumentId = String(formData.get("uploadDocumentId") || "").trim();
 
     let sourceText = pastedText;
     let sourceKind = "paste";
     let pageRefs = [];
     let resolvedTitle = title;
 
-    if (uploaded instanceof File && uploaded.size > 0) {
-      if (uploaded.size > MAX_FILE_SIZE) {
+    if (uploadDocumentId) {
+      const upload = await repository.getDocumentUploadForUser(session.user.id, uploadDocumentId);
+      if (!upload) {
         return Response.json(
-          { error: "Keep uploads under 12 MB for the first POC." },
+          { error: "The upload record was not found for this user." },
+          { status: 400 },
+        );
+      }
+    }
+
+    if (uploaded instanceof File) {
+      const validation = validateUploadDescriptor({
+        fileName: uploaded.name,
+        contentType: uploaded.type,
+        sizeBytes: uploaded.size,
+      });
+      if (!validation.ok) {
+        return Response.json(
+          { error: validation.message, code: validation.code },
           { status: 400 },
         );
       }
@@ -154,7 +172,9 @@ export async function POST(request) {
           cardCount: fallbackCards.length,
         },
       };
-      return Response.json(await persistDeck({ payload, passages, session }));
+      return Response.json(
+        await persistDeck({ payload, passages, session, repository, uploadDocumentId }),
+      );
     }
 
     try {
@@ -177,7 +197,9 @@ export async function POST(request) {
           cardCount: aiDeck.cards.length,
         },
       };
-      return Response.json(await persistDeck({ payload, passages, session }));
+      return Response.json(
+        await persistDeck({ payload, passages, session, repository, uploadDocumentId }),
+      );
     } catch (generationError) {
       const fallbackCards = createCards(passages, goal);
       const payload = {
@@ -198,7 +220,9 @@ export async function POST(request) {
           cardCount: fallbackCards.length,
         },
       };
-      return Response.json(await persistDeck({ payload, passages, session }));
+      return Response.json(
+        await persistDeck({ payload, passages, session, repository, uploadDocumentId }),
+      );
     }
   } catch (error) {
     return Response.json(
@@ -281,22 +305,16 @@ export async function PATCH(request) {
   }
 }
 
-function requestHasSameOrigin(request) {
-  const origin = request.headers.get("origin");
-  if (!origin) {
-    return true;
-  }
-
-  try {
-    return new URL(origin).origin === new URL(request.url).origin;
-  } catch {
-    return false;
-  }
-}
-
-async function persistDeck({ payload, passages, session }) {
-  const persisted = await getDefaultStudyRepository().saveGeneratedDeck({
+async function persistDeck({
+  payload,
+  passages,
+  session,
+  repository = getDefaultStudyRepository(),
+  uploadDocumentId = "",
+}) {
+  const persisted = await repository.saveGeneratedDeck({
     user: session.user,
+    documentId: uploadDocumentId,
     documentTitle: payload.documentTitle,
     goal: payload.goal,
     sourceKind: payload.sourceKind,
