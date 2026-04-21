@@ -37,6 +37,9 @@ These variables must stay server-side. They are consumed by API routes, backgrou
 | `ENABLE_AWS_SERVICES` | No | Never | Enables validation of the planned AWS inventory once those layers are introduced. |
 | `AWS_REGION` | No | `ENABLE_AWS_SERVICES=true` | Shared AWS region. |
 | `AWS_S3_BUCKET_DOCUMENTS` | No | `ENABLE_AWS_SERVICES=true` | Private document bucket. |
+| `AWS_ACCESS_KEY_ID` | No | `ENABLE_AWS_SERVICES=true` | Server-only access key used to mint short-lived S3 upload URLs for the MVP. Prefer scoped credentials or a deployment role. |
+| `AWS_SECRET_ACCESS_KEY` | No | `ENABLE_AWS_SERVICES=true` | Server-only secret used to sign S3 upload requests. Never expose to the browser. |
+| `AWS_SESSION_TOKEN` | No | Temporary credentials only | Optional server-only session token for scoped AWS credentials. |
 | `AWS_COGNITO_USER_POOL_ID` | No | `ENABLE_AWS_SERVICES=true` | Cognito user pool for sign-in. |
 | `AWS_COGNITO_CLIENT_ID` | No | `ENABLE_AWS_SERVICES=true` | Cognito app client id. |
 | `AWS_COGNITO_DOMAIN` | No | `ENABLE_AWS_SERVICES=true` | Cognito Hosted UI domain used for sign-in and sign-out redirects. |
@@ -59,6 +62,7 @@ These variables must stay server-side. They are consumed by API routes, backgrou
 - The protected study route (`/app`) and `POST /api/study-feed` now require a valid server-issued product session cookie.
 - The auth shell passes only a client-safe Cognito subset into React: region, app client id, Hosted UI domain, and route paths.
 - The product shell never stores Cognito tokens in `localStorage`; Day 02 uses a server-issued session cookie boundary instead.
+- S3 uploads use short-lived presigned PUT URLs. The browser receives only the scoped URL, required headers, and object metadata; AWS signing credentials stay server-side.
 
 ## Validation Strategy
 
