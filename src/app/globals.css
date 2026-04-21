@@ -315,6 +315,29 @@ textarea:focus-visible {
   white-space: nowrap;
 }
 
+.upload-status {
+  display: grid;
+  gap: 6px;
+  padding: 13px 14px;
+  border-radius: 20px;
+  border: 1px solid rgba(41, 88, 70, 0.16);
+  background: rgba(41, 88, 70, 0.08);
+  color: #295846;
+}
+
+.upload-status strong {
+  font-size: 0.82rem;
+  text-transform: uppercase;
+  letter-spacing: 0.2em;
+}
+
+.upload-status span {
+  overflow-wrap: anywhere;
+  color: #4d6258;
+  font-size: 0.9rem;
+  line-height: 1.55;
+}
+
 .actions {
   display: flex;
   flex-wrap: wrap;
