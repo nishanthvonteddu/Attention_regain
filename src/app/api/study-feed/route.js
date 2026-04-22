@@ -1,4 +1,3 @@
-import { PDFParse } from "pdf-parse";
 import { getEnvironmentReport } from "../../../lib/env.js";
 import {
   readProductSessionFromCookieHeader,
@@ -6,6 +5,11 @@ import {
 } from "../../../lib/auth/session.server.js";
 import { requestHasSameOrigin } from "../../../lib/auth/request.js";
 import { getDefaultStudyRepository } from "../../../lib/data/repositories.js";
+import {
+  extractPdfFile,
+  normalizeExtractedText,
+  PDF_PARSE_STATUSES,
+} from "../../../lib/documents/pdf-parser.js";
 import { validateUploadDescriptor } from "../../../lib/uploads/validation.js";
 
 export const runtime = "nodejs";
@@ -92,6 +96,7 @@ export async function POST(request) {
     let sourceText = pastedText;
     let sourceKind = "paste";
     let pageRefs = [];
+    let parseResult = null;
     let resolvedTitle = title;
 
     if (uploadDocumentId) {
@@ -118,6 +123,27 @@ export async function POST(request) {
       }
 
       const extracted = await extractFile(uploaded);
+      if (!extracted.ok) {
+        if (uploadDocumentId) {
+          await repository.markDocumentParseFailed({
+            userId: session.user.id,
+            documentId: uploadDocumentId,
+            status: extracted.status,
+            failureReason: extracted.error,
+            diagnostics: extracted.diagnostics,
+          });
+        }
+        return Response.json(
+          {
+            error: extracted.error,
+            code: extracted.code,
+            parse: buildParseResponse(extracted),
+          },
+          { status: extracted.status === PDF_PARSE_STATUSES.PARSE_FAILED ? 400 : 422 },
+        );
+      }
+
+      parseResult = extracted;
       sourceText = extracted.text;
       sourceKind = extracted.sourceKind;
       pageRefs = extracted.pages;
@@ -133,9 +159,24 @@ export async function POST(request) {
     }
 
     const pages = pageRefs.length ? pageRefs.map((page) => ({
-      num: page.num,
+      pageNumber: page.pageNumber || page.num,
+      num: page.pageNumber || page.num,
+      citation: page.citation || `Page ${page.pageNumber || page.num}`,
       text: sanitize(page.text),
+      wordCount: page.wordCount,
+      characterCount: page.characterCount,
     })) : createPseudoPages(sourceText);
+
+    if (uploadDocumentId && parseResult) {
+      await repository.saveParsedDocument({
+        userId: session.user.id,
+        documentId: uploadDocumentId,
+        text: sourceText,
+        pages,
+        diagnostics: parseResult.diagnostics,
+      });
+    }
+
     const passages = createPassages(pages);
     const wordCount = sourceText.split(/\s+/).filter(Boolean).length;
     const baseDeck = {
@@ -145,6 +186,9 @@ export async function POST(request) {
       stats: {
         estimatedMinutes: Math.max(4, Math.round(wordCount / 180)),
         chunkCount: passages.length,
+        parseStatus: parseResult?.status,
+        pageCount: parseResult?.diagnostics?.pageCount || pages.length,
+        extractedWordCount: parseResult?.diagnostics?.wordCount || wordCount,
       },
     };
 
@@ -318,7 +362,7 @@ async function persistDeck({
     documentTitle: payload.documentTitle,
     goal: payload.goal,
     sourceKind: payload.sourceKind,
-    sourceRef: payload.documentTitle,
+    sourceRef: payload.sourceRef || payload.documentTitle,
     passages,
     focusTags: payload.focusTags,
     cards: payload.cards,
@@ -334,46 +378,57 @@ async function persistDeck({
   };
 }
 
+function buildParseResponse(result) {
+  return {
+    status: result.status,
+    code: result.code,
+    pageCount: result.diagnostics?.pageCount || 0,
+    pagesWithText: result.diagnostics?.pagesWithText || 0,
+    wordCount: result.diagnostics?.wordCount || 0,
+    reason: result.diagnostics?.reason || result.error,
+  };
+}
+
 async function extractFile(file) {
   const extension = file.name.split(".").pop()?.toLowerCase() || "";
   const title = file.name.replace(/\.[^.]+$/, "");
 
   if (file.type === "application/pdf" || extension === "pdf") {
-    return extractPdf(file, title);
+    return extractPdfFile(file, { title });
   }
 
-  const text = await file.text();
+  const text = normalizeExtractedText(await file.text());
+  const pages = text
+    .split(/\n{2,}/)
+    .map((block, index) => ({
+      pageNumber: index + 1,
+      citation: `Section ${index + 1}`,
+      text: block,
+      wordCount: block.split(/\s+/).filter(Boolean).length,
+      characterCount: block.length,
+    }))
+    .filter((page) => page.text.trim());
   return {
+    ok: true,
+    status: "parsed",
+    code: "readable_text",
     title,
     text,
-    pages: text
-      .split(/\n{2,}/)
-      .map((block, index) => ({
-        num: index + 1,
-        text: block,
-      }))
-      .filter((page) => page.text.trim()),
+    pages,
+    diagnostics: {
+      parser: "plain-text",
+      status: "parsed",
+      code: "readable_text",
+      reason: "Readable text file was normalized into source sections.",
+      pageCount: pages.length || 1,
+      pagesWithText: pages.length,
+      wordCount: text.split(/\s+/).filter(Boolean).length,
+      characterCount: text.length,
+      averagePageChars: pages.length ? Math.round(text.length / pages.length) : text.length,
+      warnings: [],
+    },
     sourceKind: "file",
   };
-}
-
-async function extractPdf(file, title) {
-  const data = new Uint8Array(await file.arrayBuffer());
-  const parser = new PDFParse({ data });
-
-  try {
-    const result = await parser.getText();
-    return {
-      title,
-      text: result.text,
-      pages: result.pages
-        .map((page) => ({ num: page.num, text: page.text }))
-        .filter((page) => page.text.trim()),
-      sourceKind: "pdf",
-    };
-  } finally {
-    await parser.destroy();
-  }
 }
 
 async function generateDeckWithNvidia({ documentTitle, goal, passages, apiKey, model }) {
@@ -495,7 +550,7 @@ function createPseudoPages(text) {
   for (const block of blocks) {
     const next = current ? `${current}\n\n${block}` : block;
     if (next.length > 1500 && current) {
-      pages.push({ num: pageNum, text: current });
+      pages.push({ pageNumber: pageNum, num: pageNum, citation: `Section ${pageNum}`, text: current });
       pageNum += 1;
       current = block;
       continue;
@@ -504,16 +559,20 @@ function createPseudoPages(text) {
   }
 
   if (current) {
-    pages.push({ num: pageNum, text: current });
+    pages.push({ pageNumber: pageNum, num: pageNum, citation: `Section ${pageNum}`, text: current });
   }
 
-  return pages.length ? pages : [{ num: 1, text }];
+  return pages.length
+    ? pages
+    : [{ pageNumber: 1, num: 1, citation: "Section 1", text }];
 }
 
 function createPassages(pages) {
   const passages = [];
 
   for (const page of pages) {
+    const pageNumber = page.pageNumber || page.num || passages.length + 1;
+    const citation = page.citation || `Page ${pageNumber}`;
     const chunks = page.text
       .split(/\n{2,}/)
       .flatMap(splitLongBlock)
@@ -528,7 +587,8 @@ function createPassages(pages) {
       passages.push({
         text: chunk,
         sentences,
-        citation: `Page ${page.num}`,
+        citation,
+        pageNumber,
         topics: extractTopics(chunk),
       });
 
