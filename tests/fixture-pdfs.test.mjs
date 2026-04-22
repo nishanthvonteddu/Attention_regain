@@ -74,9 +74,12 @@ test("local PDF fixtures generate grounded fallback decks when available", async
 
         assert.equal(response.status, 200);
         assert.equal(payload.generationMode, "fallback");
+        assert.equal(payload.stats.parseStatus, "parsed");
+        assert.ok(payload.stats.pageCount > 0);
+        assert.ok(payload.stats.extractedWordCount > 0);
         assert.ok(Array.isArray(payload.cards));
         assert.ok(payload.cards.length > 0);
-        assert.ok(payload.cards.every((card) => typeof card.citation === "string" && card.citation));
+        assert.ok(payload.cards.every((card) => /^Page \d+/.test(card.citation)));
       });
     }
   } finally {
