@@ -8,7 +8,8 @@ The input is a paper, notes, or another reading source. The output is a mobile-f
 
 - Next.js App Router frontend in a single page file
 - Paste-text and PDF upload intake
-- Server-side PDF text extraction with `pdf-parse`
+- Server-side PDF text extraction with page references and explicit OCR-needed
+  failure states
 - Source-grounded feed generation for:
   - quick-read cards
   - recall prompts
@@ -77,6 +78,7 @@ The app now uses NVIDIA's OpenAI-compatible chat completions endpoint and falls 
 - `src/app/globals.css`
 - `src/app/page.js`
 - `src/app/api/study-feed/route.js`
+- `src/lib/documents/pdf-parser.js`
 - `README.md`
 
 ## Product Boundary
