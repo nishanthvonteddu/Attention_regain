@@ -53,6 +53,7 @@ export function StudyWorkspace() {
   const [file, setFile] = useState(null);
   const [fileName, setFileName] = useState("");
   const [uploadStatus, setUploadStatus] = useState(null);
+  const [workspaceState, setWorkspaceState] = useState(null);
   const [deck, setDeck] = useState(null);
   const [feedback, setFeedback] = useState({});
   const [error, setError] = useState("");
@@ -64,8 +65,8 @@ export function StudyWorkspace() {
   const [isPending, startTransition] = useTransition();
 
   const deferredDeck = useDeferredValue(deck);
-  const visibleDeck = deferredDeck || deck || PREVIEW_DECK;
-  const isPreview = !deck;
+  const visibleDeck = deferredDeck || deck || (!workspaceState?.document ? PREVIEW_DECK : null);
+  const isPreview = !deck && !workspaceState?.document;
   const identityLabel =
     session.user.displayName || session.user.email || session.user.id;
 
@@ -82,6 +83,7 @@ export function StudyWorkspace() {
       setSourceText(parsed.sourceText || "");
       setFileName(parsed.fileName || "");
       setUploadStatus(parsed.uploadStatus || null);
+      setWorkspaceState(parsed.workspaceState || null);
       setDeck(parsed.deck || null);
       setFeedback(parsed.feedback || {});
       if (parsed.deck) {
@@ -104,17 +106,20 @@ export function StudyWorkspace() {
           return;
         }
         const payload = await response.json();
-        if (cancelled || !payload.deck) {
+        if (cancelled || (!payload.deck && !payload.document)) {
           return;
         }
 
         startTransition(() => {
-          setDeck(payload.deck);
-          setFeedback({});
+          setDeck(payload.deck || null);
+          setWorkspaceState(payload);
+          if (payload.deck) {
+            setFeedback({});
+          }
         });
-        setTitle(payload.deck.documentTitle || "");
-        setGoal(payload.deck.goal || "");
-        setStatusMessage("Private study session restored from server persistence.");
+        setTitle(payload.deck?.documentTitle || payload.document?.title || "");
+        setGoal(payload.deck?.goal || payload.document?.goal || "");
+        setStatusMessage(describeWorkspaceStatus(payload));
       } catch {
         // Browser storage remains a local fallback if the server adapter is unavailable.
       }
@@ -135,6 +140,7 @@ export function StudyWorkspace() {
         sourceText,
         fileName,
         uploadStatus,
+        workspaceState,
         deck: nextDeck,
         feedback: nextFeedback,
       }),
@@ -157,7 +163,44 @@ export function StudyWorkspace() {
     storageKey,
     title,
     uploadStatus,
+    workspaceState,
   ]);
+
+  const syncWorkspace = useEffectEvent(async () => {
+    try {
+      const response = await fetch("/api/study-feed", { method: "GET" });
+      if (!response.ok) {
+        return;
+      }
+
+      const payload = await response.json();
+      startTransition(() => {
+        setWorkspaceState(payload);
+        setDeck(payload.deck || null);
+        if (payload.deck) {
+          setFeedback({});
+        }
+      });
+      setStatusMessage(describeWorkspaceStatus(payload));
+    } catch {
+      // The last visible status stays in place until polling succeeds again.
+    }
+  });
+
+  useEffect(() => {
+    if (!workspaceState?.job?.active) {
+      return;
+    }
+
+    void syncWorkspace();
+    const timer = window.setInterval(() => {
+      void syncWorkspace();
+    }, 1000);
+
+    return () => {
+      window.clearInterval(timer);
+    };
+  }, [syncWorkspace, workspaceState?.job?.active]);
 
   const feedbackValues = Object.values(feedback);
   const sessionStats = {
@@ -180,8 +223,8 @@ export function StudyWorkspace() {
       setIsSubmitting(true);
       setStatusMessage(
         file
-          ? "Preparing a private upload record before shaping the feed."
-          : "Breaking the source into passages and building study cards.",
+          ? "Preparing a private upload record before queueing background processing."
+          : "Queueing the source for background parsing and grounded card generation.",
       );
 
       const upload = file ? await preparePrivateUpload(file) : null;
@@ -208,16 +251,14 @@ export function StudyWorkspace() {
       }
 
       startTransition(() => {
-        setDeck(payload);
-        setFeedback({});
+        setWorkspaceState(payload);
+        setDeck(payload.deck || null);
+        if (payload.deck) {
+          setFeedback({});
+        }
       });
-      setStatusMessage(
-        payload.generationMode === "ai"
-          ? `Feed ready from ${payload.model}. The cards are generated from the source inside the private app shell.`
-          : payload.warning
-            ? `Fallback feed ready. ${payload.warning}`
-            : "Feed ready. The cards were generated with the local fallback path because no live model key is configured.",
-      );
+      setUploadStatus(buildProcessingBadge(payload));
+      setStatusMessage(describeWorkspaceStatus(payload));
     } catch (caughtError) {
       setError(
         caughtError instanceof Error
@@ -237,6 +278,7 @@ export function StudyWorkspace() {
     setFile(null);
     setFileName("");
     setUploadStatus(null);
+    setWorkspaceState(null);
     setError("");
     setStatusMessage(
       "Sample reading loaded. Generate the feed to inspect the full protected-session workflow.",
@@ -250,6 +292,7 @@ export function StudyWorkspace() {
     setFile(null);
     setFileName("");
     setUploadStatus(null);
+    setWorkspaceState(null);
     setDeck(null);
     setFeedback({});
     setError("");
@@ -262,6 +305,7 @@ export function StudyWorkspace() {
   function onFileChange(nextFile) {
     setError("");
     setUploadStatus(null);
+    setWorkspaceState(null);
 
     if (!nextFile) {
       setFile(null);
@@ -358,8 +402,8 @@ export function StudyWorkspace() {
     });
     setStatusMessage(
       upload.url
-        ? "Private S3 upload confirmed. Generating cards from the source."
-        : "Private upload metadata saved. Local parsing remains active until the S3 parser lands.",
+        ? "Private S3 upload confirmed. The source is ready for the background worker."
+        : "Private upload metadata saved. The source is ready for the background worker.",
     );
 
     return upload;
@@ -423,6 +467,7 @@ export function StudyWorkspace() {
   }
 
   const busy = isSubmitting || isPending;
+  const visibleUploadStatus = buildProcessingBadge(workspaceState) || uploadStatus;
 
   return (
     <main className="shell">
@@ -529,10 +574,10 @@ export function StudyWorkspace() {
                   </button>
                 </div>
               ) : null}
-              {uploadStatus ? (
+              {visibleUploadStatus ? (
                 <div className="upload-status">
-                  <strong>{uploadStatus.label}</strong>
-                  <span>{uploadStatus.detail}</span>
+                  <strong>{visibleUploadStatus.label}</strong>
+                  <span>{visibleUploadStatus.detail}</span>
                 </div>
               ) : null}
             </div>
@@ -581,125 +626,161 @@ export function StudyWorkspace() {
 
       <section className="feed-shell">
         <div className="feed-frame">
-          <header className="feed-header">
-            <p className="feed-mode">{isPreview ? "Protected preview" : "Private study session"}</p>
-            <div className="feed-summary">
-              <div>
-                <h2 className="feed-title">{visibleDeck.documentTitle}</h2>
-                <p className="feed-goal">{visibleDeck.goal}</p>
-              </div>
-              <div>
-                <p className="feed-goal">
-                  {visibleDeck.stats.estimatedMinutes} min source
-                </p>
-                <p>
-                  {visibleDeck.stats.cardCount} cards from {visibleDeck.stats.chunkCount} passages
-                </p>
-                {visibleDeck.model ? (
-                  <p style={{ marginTop: 8 }}>
-                    {visibleDeck.generationMode === "ai"
-                      ? `Model: ${visibleDeck.model}`
-                      : visibleDeck.generationMode === "fallback"
-                        ? "Mode: heuristic fallback"
-                        : "Mode: preview"}
-                  </p>
-                ) : null}
-              </div>
-            </div>
+          {visibleDeck ? (
+            <>
+              <header className="feed-header">
+                <p className="feed-mode">{isPreview ? "Protected preview" : "Private study session"}</p>
+                <div className="feed-summary">
+                  <div>
+                    <h2 className="feed-title">{visibleDeck.documentTitle}</h2>
+                    <p className="feed-goal">{visibleDeck.goal}</p>
+                  </div>
+                  <div>
+                    <p className="feed-goal">
+                      {visibleDeck.stats.estimatedMinutes} min source
+                    </p>
+                    <p>
+                      {visibleDeck.stats.cardCount} cards from {visibleDeck.stats.chunkCount} passages
+                    </p>
+                    {visibleDeck.model ? (
+                      <p style={{ marginTop: 8 }}>
+                        {visibleDeck.generationMode === "ai"
+                          ? `Model: ${visibleDeck.model}`
+                          : visibleDeck.generationMode === "fallback"
+                            ? "Mode: heuristic fallback"
+                            : "Mode: preview"}
+                      </p>
+                    ) : null}
+                  </div>
+                </div>
 
-            <div className="tag-row">
-              {visibleDeck.focusTags.map((tag) => (
-                <span className="tag" key={tag}>
-                  {tag}
-                </span>
-              ))}
-            </div>
+                <div className="tag-row">
+                  {visibleDeck.focusTags.map((tag) => (
+                    <span className="tag" key={tag}>
+                      {tag}
+                    </span>
+                  ))}
+                </div>
 
-            <div className="metric-row">
-              <Metric label="Locked in" value={sessionStats.locked} />
-              <Metric label="Review again" value={sessionStats.review} />
-              <Metric label="Saved" value={sessionStats.saved} />
-              <Metric label="Revealed" value={sessionStats.revealed} />
-            </div>
-          </header>
+                <div className="metric-row">
+                  <Metric label="Locked in" value={sessionStats.locked} />
+                  <Metric label="Review again" value={sessionStats.review} />
+                  <Metric label="Saved" value={sessionStats.saved} />
+                  <Metric label="Revealed" value={sessionStats.revealed} />
+                </div>
+              </header>
 
-          <div className="feed-body">
-            <div className="feed-column">
-              {visibleDeck.cards.map((card) => {
-                const tone = TONE[card.kind] || TONE.glance;
-                const state = feedback[card.id] || EMPTY_FEEDBACK;
+              <div className="feed-body">
+                <div className="feed-column">
+                  {visibleDeck.cards.map((card) => {
+                    const tone = TONE[card.kind] || TONE.glance;
+                    const state = feedback[card.id] || EMPTY_FEEDBACK;
 
-                return (
-                  <article className="feed-card" key={card.id}>
-                    <div className="feed-card-head">
-                      <div>
-                        <span className="tone" style={tone.style}>
-                          {tone.label}
-                        </span>
-                        <h3>{card.title}</h3>
-                      </div>
-                      <button
-                        className={`pill ${state.saved ? "active-dark" : ""}`}
-                        type="button"
-                        onClick={() => toggleSave(card.id)}
-                      >
-                        {state.saved ? "Saved" : "Save"}
-                      </button>
-                    </div>
-
-                    <p>{card.body}</p>
-
-                    <div className="card-prompt">
-                      <strong>{card.question ? tone.promptLabel : "Source anchor"}</strong>
-                      <p>{card.question || card.excerpt}</p>
-
-                      {card.answer ? (
-                        <>
+                    return (
+                      <article className="feed-card" key={card.id}>
+                        <div className="feed-card-head">
+                          <div>
+                            <span className="tone" style={tone.style}>
+                              {tone.label}
+                            </span>
+                            <h3>{card.title}</h3>
+                          </div>
                           <button
-                            className="primary-button"
-                            style={{ marginTop: 14 }}
+                            className={`pill ${state.saved ? "active-dark" : ""}`}
                             type="button"
-                            onClick={() => toggleReveal(card.id)}
+                            onClick={() => toggleSave(card.id)}
                           >
-                            {state.revealed ? "Hide answer" : "Reveal answer"}
+                            {state.saved ? "Saved" : "Save"}
                           </button>
-                          {state.revealed ? <div className="answer">{card.answer}</div> : null}
-                        </>
-                      ) : null}
-                    </div>
+                        </div>
 
-                    <div className="card-actions">
-                      <button
-                        className={`pill ${state.confidence === "locked" ? "active-green" : ""}`}
-                        type="button"
-                        onClick={() =>
-                          setConfidence(
-                            card.id,
-                            state.confidence === "locked" ? null : "locked",
-                          )
-                        }
-                      >
-                        Locked in
-                      </button>
-                      <button
-                        className={`pill ${state.confidence === "review" ? "active-amber" : ""}`}
-                        type="button"
-                        onClick={() =>
-                          setConfidence(
-                            card.id,
-                            state.confidence === "review" ? null : "review",
-                          )
-                        }
-                      >
-                        Review again
-                      </button>
-                      <span className="citation">{card.citation}</span>
+                        <p>{card.body}</p>
+
+                        <div className="card-prompt">
+                          <strong>{card.question ? tone.promptLabel : "Source anchor"}</strong>
+                          <p>{card.question || card.excerpt}</p>
+
+                          {card.answer ? (
+                            <>
+                              <button
+                                className="primary-button"
+                                style={{ marginTop: 14 }}
+                                type="button"
+                                onClick={() => toggleReveal(card.id)}
+                              >
+                                {state.revealed ? "Hide answer" : "Reveal answer"}
+                              </button>
+                              {state.revealed ? <div className="answer">{card.answer}</div> : null}
+                            </>
+                          ) : null}
+                        </div>
+
+                        <div className="card-actions">
+                          <button
+                            className={`pill ${state.confidence === "locked" ? "active-green" : ""}`}
+                            type="button"
+                            onClick={() =>
+                              setConfidence(
+                                card.id,
+                                state.confidence === "locked" ? null : "locked",
+                              )
+                            }
+                          >
+                            Locked in
+                          </button>
+                          <button
+                            className={`pill ${state.confidence === "review" ? "active-amber" : ""}`}
+                            type="button"
+                            onClick={() =>
+                              setConfidence(
+                                card.id,
+                                state.confidence === "review" ? null : "review",
+                              )
+                            }
+                          >
+                            Review again
+                          </button>
+                          <span className="citation">{card.citation}</span>
+                        </div>
+                      </article>
+                    );
+                  })}
+                </div>
+              </div>
+            </>
+          ) : (
+            <div className="feed-body">
+              <div className="feed-column">
+                <article className="feed-card">
+                  <div className="feed-card-head">
+                    <div>
+                      <span className="tone" style={TONE.application.style}>
+                        Background worker
+                      </span>
+                      <h3>{workspaceState?.document?.title || "Waiting for a study source"}</h3>
                     </div>
-                  </article>
-                );
-              })}
+                  </div>
+                  <p>{describeWorkspaceStatus(workspaceState)}</p>
+                  <div className="card-prompt">
+                    <strong>Current document status</strong>
+                    <p>
+                      {workspaceState?.document?.status
+                        ? formatDocumentStatus(workspaceState.document.status)
+                        : "No server-backed document is active yet."}
+                    </p>
+                    {workspaceState?.job ? (
+                      <p>
+                        Attempt {workspaceState.job.attemptCount} of {workspaceState.job.maxAttempts}.
+                      </p>
+                    ) : null}
+                    {workspaceState?.document?.failureReason ? (
+                      <p>{workspaceState.document.failureReason}</p>
+                    ) : null}
+                  </div>
+                </article>
+              </div>
             </div>
-          </div>
+          )}
         </div>
       </section>
     </main>
@@ -713,4 +794,60 @@ function Metric({ label, value }) {
       <strong>{value}</strong>
     </div>
   );
+}
+
+function buildProcessingBadge(workspaceState) {
+  const status = workspaceState?.document?.status;
+  if (!status || status === "cards_generated") {
+    return null;
+  }
+
+  const lastError = workspaceState?.job?.lastError;
+  if (status === "failed" || status === "parse_failed" || status === "ocr_needed") {
+    return {
+      label: "Processing stopped",
+      detail: lastError || workspaceState?.document?.failureReason || formatDocumentStatus(status),
+    };
+  }
+
+  return {
+    label: `Document ${formatDocumentStatus(status)}`,
+    detail:
+      status === "queued"
+        ? "The worker has the job and will pick it up shortly."
+        : "The worker is parsing and building grounded cards in the background.",
+  };
+}
+
+function describeWorkspaceStatus(workspaceState) {
+  if (!workspaceState?.document && !workspaceState?.deck) {
+    return "The private workspace is ready. Upload a paper or paste notes to turn this session into a grounded study feed.";
+  }
+
+  if (workspaceState?.deck) {
+    return workspaceState.deck.generationMode === "ai"
+      ? `Feed ready from ${workspaceState.deck.model}. The cards are grounded in the private source.`
+      : workspaceState.deck.warning
+        ? `Fallback feed ready. ${workspaceState.deck.warning}`
+        : "Feed ready. The cards were generated with the local fallback path because no live model key is configured.";
+  }
+
+  const status = workspaceState?.document?.status;
+  if (status === "queued") {
+    return "The document is queued. The app will refresh as soon as background parsing starts.";
+  }
+  if (status === "processing") {
+    return "The document is processing in the background. Parsing, retrieval prep, and card generation are off the request path now.";
+  }
+  if (status === "parse_failed" || status === "ocr_needed" || status === "failed") {
+    return workspaceState?.document?.failureReason || "Background processing stopped before a feed was ready.";
+  }
+
+  return "The private study workspace is ready.";
+}
+
+function formatDocumentStatus(status) {
+  return String(status || "")
+    .replace(/_/g, " ")
+    .replace(/\b\w/g, (letter) => letter.toUpperCase());
 }
