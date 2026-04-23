@@ -32,6 +32,7 @@ Fields:
 
 - `id`, `user_id`, `title`, `source_kind`, `source_ref`
 - `goal`, `status`, `content_hash`, `word_count`
+- `page_count`, `parse_status`
 - `created_at`, `updated_at`, `parsed_at`, `failed_at`
 - `failure_reason`
 
@@ -55,6 +56,18 @@ Stores normalized source slices used for retrieval and grounded generation.
 Chunks belong to one document and include stable citation text such as `Page 2`.
 Embedding vectors are planned for the hosted adapter; the initial migration keeps
 provider metadata and vector status separate from the chunk text.
+
+### document_pages
+
+Stores normalized extracted text per source page. Page rows are queryable by
+`document_id` and `page_number`, retain their citation label, and provide the
+source text boundary that downstream retrieval can cite.
+
+### document_parse_diagnostics
+
+Records parser outcomes for normal, scanned-like, and failed PDFs. Diagnostics
+store parser name, explicit status, machine-readable code, page counts, text
+signal counts, and warnings so failure states can be shown without guessing.
 
 ### study_sessions
 
@@ -83,7 +96,9 @@ Document status:
 3. `parsed` when readable text has been extracted.
 4. `chunked` when source chunks have been stored.
 5. `cards_generated` when at least one grounded card is persisted.
-6. `failed` when parsing, chunking, or generation cannot complete.
+6. `ocr_needed` when the PDF has pages but too little extractable text.
+7. `parse_failed` when the parser cannot read the PDF structure.
+8. `failed` when chunking or generation cannot complete after parsing.
 
 Session status:
 
@@ -125,6 +140,14 @@ Migration `0002_document_uploads.sql` creates:
 - unique S3 bucket/object-key traceability
 - upload lifecycle indexes for owner-scoped queries
 
+Migration `0003_document_parse_outputs.sql` adds:
+
+- explicit `ocr_needed` and `parse_failed` document states
+- `page_count` and `parse_status` fields on documents
+- `page_number` on document chunks for page-aware retrieval
+- `document_pages` for citation-ready page text
+- `document_parse_diagnostics` for parse signal and failure explanations
+
 Rollout order:
 
 1. Create owner table and document tables.
@@ -134,6 +157,7 @@ Rollout order:
 5. Create interactions after sessions and cards.
 6. Add indexes for user dashboards, latest session lookup, and source retrieval.
 7. Add upload metadata after the core document table exists.
+8. Add parse outputs before background OCR and retrieval workers.
 
 Rollback expectation: Day 03 migrations are reversible before production data is
 loaded. After real user data exists, rollback should be a forward migration that
@@ -159,6 +183,7 @@ Repository responsibilities:
 
 - Generate public resource IDs.
 - Store documents, chunks, sessions, cards, and interactions.
+- Store extracted page text and parser diagnostics before generation.
 - Return only rows owned by the authenticated user.
 - Keep local JSON storage and future Postgres storage behind the same service
   boundary.

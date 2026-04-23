@@ -9,8 +9,11 @@ export const DOCUMENT_STATUSES = Object.freeze([
   "parsed",
   "chunked",
   "cards_generated",
+  "ocr_needed",
+  "parse_failed",
   "failed",
 ]);
+export const PARSE_STATUSES = Object.freeze(["parsed", "ocr_needed", "parse_failed"]);
 export const SESSION_STATUSES = Object.freeze(["building", "ready", "archived", "failed"]);
 export const CARD_STATUSES = Object.freeze(["active", "saved", "dismissed"]);
 export const UPLOAD_STATUSES = Object.freeze([
@@ -30,6 +33,7 @@ export const INTERACTION_TYPES = Object.freeze([
 const STATUS_SETS = {
   sourceKind: new Set(SOURCE_KINDS),
   document: new Set(DOCUMENT_STATUSES),
+  parse: new Set(PARSE_STATUSES),
   session: new Set(SESSION_STATUSES),
   card: new Set(CARD_STATUSES),
   upload: new Set(UPLOAD_STATUSES),
@@ -71,6 +75,10 @@ export function normalizeJsonStore(input = {}) {
     users: Array.isArray(input.users) ? input.users : [],
     documents: Array.isArray(input.documents) ? input.documents : [],
     documentUploads: Array.isArray(input.documentUploads) ? input.documentUploads : [],
+    documentPages: Array.isArray(input.documentPages) ? input.documentPages : [],
+    documentParseDiagnostics: Array.isArray(input.documentParseDiagnostics)
+      ? input.documentParseDiagnostics
+      : [],
     documentChunks: Array.isArray(input.documentChunks) ? input.documentChunks : [],
     studySessions: Array.isArray(input.studySessions) ? input.studySessions : [],
     studyCards: Array.isArray(input.studyCards) ? input.studyCards : [],
@@ -84,6 +92,14 @@ export function createEmptyJsonStore() {
     migrations: [
       {
         id: "0001_core_schema",
+        appliedAt: nowIso(),
+      },
+      {
+        id: "0002_document_uploads",
+        appliedAt: nowIso(),
+      },
+      {
+        id: "0003_document_parse_outputs",
         appliedAt: nowIso(),
       },
     ],

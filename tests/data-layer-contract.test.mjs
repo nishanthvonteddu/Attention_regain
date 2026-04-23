@@ -21,6 +21,8 @@ test("Day 03 documentation defines entities, status transitions, and boundaries"
     "study_sessions",
     "study_cards",
     "study_interactions",
+    "document_pages",
+    "document_parse_diagnostics",
     "Status Transitions",
     "Repository Boundaries",
     "Rollback expectation",

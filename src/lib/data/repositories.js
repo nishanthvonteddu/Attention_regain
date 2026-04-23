@@ -19,6 +19,15 @@ export function createStudyRepository({ store = createLocalJsonStore() } = {}) {
     getDocumentUploadForUser(userId, documentId) {
       return getDocumentUploadForUser(store, userId, documentId);
     },
+    saveParsedDocument(input) {
+      return saveParsedDocument(store, input);
+    },
+    markDocumentParseFailed(input) {
+      return markDocumentParseFailed(store, input);
+    },
+    getDocumentParseForUser(userId, documentId) {
+      return getDocumentParseForUser(store, userId, documentId);
+    },
     saveGeneratedDeck(input) {
       return saveGeneratedDeck(store, input);
     },
@@ -148,6 +157,175 @@ async function getDocumentUploadForUser(store, userId, documentId) {
   ) || null;
 }
 
+async function saveParsedDocument(store, input) {
+  const userId = requireNonEmpty(input.userId, "userId");
+  const documentId = requireNonEmpty(input.documentId, "documentId");
+  const timestamp = nowIso();
+  const text = String(input.text || "");
+  const pages = normalizePageInputs(input.pages);
+  const diagnostics = normalizeDiagnostics(input.diagnostics, "parsed");
+  const wordCount = text.split(/\s+/).filter(Boolean).length;
+  let parsedDocument = null;
+
+  await store.update((current) => {
+    const existingDocument = current.documents.find(
+      (entry) => entry.id === documentId && entry.userId === userId,
+    );
+    if (!existingDocument) {
+      throw new Error("Document upload was not found for this user.");
+    }
+
+    parsedDocument = {
+      ...existingDocument,
+      status: "parsed",
+      contentHash: hashSourceText(text),
+      wordCount,
+      pageCount: pages.length,
+      parseStatus: "parsed",
+      updatedAt: timestamp,
+      parsedAt: timestamp,
+      failedAt: null,
+      failureReason: "",
+    };
+
+    return {
+      ...current,
+      documents: current.documents.map((document) =>
+        document.id === documentId && document.userId === userId ? parsedDocument : document,
+      ),
+      documentPages: [
+        ...current.documentPages.filter((page) => page.documentId !== documentId),
+        ...pages.map((page) => ({
+          id: createPublicId("page"),
+          documentId,
+          pageNumber: page.pageNumber,
+          citation: page.citation || `Page ${page.pageNumber}`,
+          text: page.text,
+          wordCount: page.wordCount,
+          characterCount: page.characterCount,
+          createdAt: timestamp,
+        })),
+      ],
+      documentParseDiagnostics: [
+        ...current.documentParseDiagnostics.filter(
+          (entry) => entry.documentId !== documentId || entry.status !== "parsed",
+        ),
+        {
+          id: createPublicId("parse"),
+          documentId,
+          status: "parsed",
+          code: diagnostics.code,
+          parser: diagnostics.parser,
+          reason: diagnostics.reason,
+          pageCount: diagnostics.pageCount,
+          pagesWithText: diagnostics.pagesWithText,
+          wordCount: diagnostics.wordCount,
+          characterCount: diagnostics.characterCount,
+          averagePageChars: diagnostics.averagePageChars,
+          warnings: diagnostics.warnings,
+          createdAt: timestamp,
+        },
+      ],
+    };
+  });
+
+  return parsedDocument;
+}
+
+async function markDocumentParseFailed(store, input) {
+  const userId = requireNonEmpty(input.userId, "userId");
+  const documentId = requireNonEmpty(input.documentId, "documentId");
+  const status = requireNonEmpty(input.status, "status");
+  assertAllowedValue("parse", status);
+  if (status === "parsed") {
+    throw new Error("Parsed documents must be saved through saveParsedDocument.");
+  }
+
+  const timestamp = nowIso();
+  const diagnostics = normalizeDiagnostics(input.diagnostics, status);
+  let failedDocument = null;
+
+  await store.update((current) => {
+    const existingDocument = current.documents.find(
+      (entry) => entry.id === documentId && entry.userId === userId,
+    );
+    if (!existingDocument) {
+      throw new Error("Document upload was not found for this user.");
+    }
+
+    const failureReason = String(input.failureReason || diagnostics.reason || status);
+    failedDocument = {
+      ...existingDocument,
+      status,
+      pageCount: diagnostics.pageCount,
+      parseStatus: status,
+      updatedAt: timestamp,
+      failedAt: timestamp,
+      failureReason,
+    };
+
+    return {
+      ...current,
+      documents: current.documents.map((document) =>
+        document.id === documentId && document.userId === userId ? failedDocument : document,
+      ),
+      documentUploads: current.documentUploads.map((upload) =>
+        upload.documentId === documentId && upload.userId === userId && upload.status !== "consumed"
+          ? {
+              ...upload,
+              status: "failed",
+              updatedAt: timestamp,
+              failedAt: timestamp,
+              failureReason,
+            }
+          : upload,
+      ),
+      documentParseDiagnostics: [
+        ...current.documentParseDiagnostics,
+        {
+          id: createPublicId("parse"),
+          documentId,
+          status,
+          code: diagnostics.code,
+          parser: diagnostics.parser,
+          reason: diagnostics.reason,
+          pageCount: diagnostics.pageCount,
+          pagesWithText: diagnostics.pagesWithText,
+          wordCount: diagnostics.wordCount,
+          characterCount: diagnostics.characterCount,
+          averagePageChars: diagnostics.averagePageChars,
+          warnings: diagnostics.warnings,
+          createdAt: timestamp,
+        },
+      ],
+    };
+  });
+
+  return failedDocument;
+}
+
+async function getDocumentParseForUser(store, userId, documentId) {
+  const ownerId = requireNonEmpty(userId, "userId");
+  const targetDocumentId = requireNonEmpty(documentId, "documentId");
+  const current = await store.read();
+  const document = current.documents.find(
+    (entry) => entry.id === targetDocumentId && entry.userId === ownerId,
+  );
+  if (!document) {
+    return null;
+  }
+
+  return {
+    document,
+    pages: current.documentPages
+      .filter((page) => page.documentId === targetDocumentId)
+      .sort((left, right) => left.pageNumber - right.pageNumber),
+    diagnostics: current.documentParseDiagnostics
+      .filter((entry) => entry.documentId === targetDocumentId)
+      .sort((left, right) => String(left.createdAt).localeCompare(String(right.createdAt))),
+  };
+}
+
 async function saveGeneratedDeck(store, input) {
   const userId = requireNonEmpty(input.user?.id, "user.id");
   const title = requireNonEmpty(input.documentTitle, "documentTitle");
@@ -169,11 +347,15 @@ async function saveGeneratedDeck(store, input) {
   const sessionId = createPublicId("session");
   const chunkRows = passages.map((passage, index) => {
     const text = String(passage.text || "");
+    const pageNumber = Number.isSafeInteger(passage.pageNumber)
+      ? passage.pageNumber
+      : extractPageNumber(passage.citation);
     return {
       id: createPublicId("chunk"),
       documentId,
       sequence: index,
       citation: String(passage.citation || `Section ${index + 1}`),
+      pageNumber,
       text,
       topics: Array.isArray(passage.topics) ? passage.topics.map(String) : [],
       tokenEstimate: estimateTokens(text),
@@ -241,6 +423,8 @@ async function saveGeneratedDeck(store, input) {
       status: "cards_generated",
       contentHash: hashSourceText(sourceText),
       wordCount: sourceText.split(/\s+/).filter(Boolean).length,
+      pageCount: existingDocument?.pageCount || countDistinctPageNumbers(chunkRows),
+      parseStatus: existingDocument?.parseStatus || "parsed",
       createdAt: existingDocument?.createdAt || timestamp,
       updatedAt: timestamp,
       parsedAt: timestamp,
@@ -447,6 +631,65 @@ function markConsumedUploadRows(rows, documentId, userId, timestamp) {
       consumedAt: timestamp,
     };
   });
+}
+
+function normalizePageInputs(pages = []) {
+  return (Array.isArray(pages) ? pages : [])
+    .map((page, index) => {
+      const pageNumber = Number.isSafeInteger(page?.pageNumber)
+        ? page.pageNumber
+        : Number.isSafeInteger(page?.num)
+          ? page.num
+          : index + 1;
+      const text = String(page?.text || "").trim();
+      return {
+        pageNumber,
+        citation: String(page?.citation || `Page ${pageNumber}`),
+        text,
+        wordCount: Number.isSafeInteger(page?.wordCount)
+          ? page.wordCount
+          : text.split(/\s+/).filter(Boolean).length,
+        characterCount: Number.isSafeInteger(page?.characterCount)
+          ? page.characterCount
+          : text.length,
+      };
+    })
+    .filter((page) => page.text);
+}
+
+function normalizeDiagnostics(diagnostics = {}, fallbackStatus) {
+  const status = typeof diagnostics.status === "string" ? diagnostics.status : fallbackStatus;
+  assertAllowedValue("parse", status);
+  return {
+    parser: typeof diagnostics.parser === "string" ? diagnostics.parser : "pdf-parse",
+    status,
+    code: typeof diagnostics.code === "string" ? diagnostics.code : status,
+    reason: typeof diagnostics.reason === "string" ? diagnostics.reason : status,
+    pageCount: Number.isSafeInteger(diagnostics.pageCount) ? diagnostics.pageCount : 0,
+    pagesWithText: Number.isSafeInteger(diagnostics.pagesWithText) ? diagnostics.pagesWithText : 0,
+    wordCount: Number.isSafeInteger(diagnostics.wordCount) ? diagnostics.wordCount : 0,
+    characterCount: Number.isSafeInteger(diagnostics.characterCount)
+      ? diagnostics.characterCount
+      : 0,
+    averagePageChars: Number.isSafeInteger(diagnostics.averagePageChars)
+      ? diagnostics.averagePageChars
+      : 0,
+    warnings: Array.isArray(diagnostics.warnings) ? diagnostics.warnings.map(String) : [],
+  };
+}
+
+function extractPageNumber(citation) {
+  const match = String(citation || "").match(/\bPage\s+(\d+)\b/i);
+  return match ? Number.parseInt(match[1], 10) : null;
+}
+
+function countDistinctPageNumbers(rows) {
+  const pageNumbers = new Set(
+    rows
+      .map((row) => row.pageNumber)
+      .filter((pageNumber) => Number.isSafeInteger(pageNumber)),
+  );
+  return pageNumbers.size;
 }
 
 function requireNonEmpty(value, label) {
