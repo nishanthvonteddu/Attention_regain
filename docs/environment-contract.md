@@ -72,9 +72,9 @@ The Day 1 validation contract has two layers:
    - checks the documented contract
    - rejects impossible flag combinations
    - catches missing required values when a feature is explicitly enabled
-2. runtime fallback in `src/app/api/study-feed/route.js`
-   - if live generation is disabled or unconfigured, the route uses heuristic card generation
-   - if live generation is explicitly enabled but misconfigured, the route still falls back and returns a warning instead of silently pretending the model ran
+2. runtime fallback in the background document pipeline
+   - if live generation is disabled or unconfigured, the worker uses heuristic card generation
+   - if live generation is explicitly enabled but misconfigured, the worker still falls back and records a warning instead of silently pretending the model ran
 
 ## Failure Paths
 
