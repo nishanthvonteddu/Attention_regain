@@ -1,9 +1,9 @@
 # Private Upload Pipeline
 
-Day 04 adds the private S3 upload boundary that sits in front of PDF parsing and
-feed generation. The local MVP can still parse uploaded bytes in the API route so
-the real PDF fixtures remain testable before the Day 05 backend parser consumes
-objects from S3.
+Day 04 adds the private S3 upload boundary that sits in front of background
+document processing. Day 06 keeps the same owner-bound upload contract, but
+`POST /api/study-feed` now enqueues work for the background worker instead of
+parsing uploaded bytes inside the request.
 
 ## Flow
 
@@ -16,8 +16,10 @@ objects from S3.
 4. The browser uploads the object to S3, then calls `PATCH /api/document-uploads`
    to mark the upload as complete.
 5. `POST /api/study-feed` receives the upload document id, verifies that the
-   record belongs to the current user, and consumes the upload record when cards
-   are persisted.
+   record belongs to the current user, and enqueues a background
+   `document-processing` job for that document.
+6. The worker parses the source, persists diagnostics, generates cards, and
+   consumes the upload record when cards are stored successfully.
 
 ## Ownership And Keys
 

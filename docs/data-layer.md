@@ -69,6 +69,12 @@ Records parser outcomes for normal, scanned-like, and failed PDFs. Diagnostics
 store parser name, explicit status, machine-readable code, page counts, text
 signal counts, and warnings so failure states can be shown without guessing.
 
+### document_processing_jobs
+
+Stores the queued worker contract for parse and generation orchestration. Jobs
+belong to one document and one user, carry a JSON payload, and record retry or
+dead-letter state separately from the document row.
+
 ### study_sessions
 
 Represents one generated feed for one document and one goal. Sessions are owned
@@ -93,12 +99,14 @@ Document status:
 
 1. `draft` when the document row is created.
 2. `uploaded` when a source file or pasted source is accepted.
-3. `parsed` when readable text has been extracted.
-4. `chunked` when source chunks have been stored.
-5. `cards_generated` when at least one grounded card is persisted.
-6. `ocr_needed` when the PDF has pages but too little extractable text.
-7. `parse_failed` when the parser cannot read the PDF structure.
-8. `failed` when chunking or generation cannot complete after parsing.
+3. `queued` when background processing has been requested.
+4. `processing` when a worker has leased the job.
+5. `parsed` when readable text has been extracted.
+6. `chunked` when source chunks have been stored.
+7. `cards_generated` when at least one grounded card is persisted.
+8. `ocr_needed` when the PDF has pages but too little extractable text.
+9. `parse_failed` when the parser cannot read the PDF structure.
+10. `failed` when background retries are exhausted or generation cannot complete.
 
 Session status:
 
@@ -148,6 +156,12 @@ Migration `0003_document_parse_outputs.sql` adds:
 - `document_pages` for citation-ready page text
 - `document_parse_diagnostics` for parse signal and failure explanations
 
+Migration `0004_document_processing_jobs.sql` adds:
+
+- `queued` and `processing` document states
+- `document_processing_jobs` for queue payloads, retries, and dead-letter state
+- lease metadata so a worker can recover stalled jobs
+
 Rollout order:
 
 1. Create owner table and document tables.
@@ -158,6 +172,7 @@ Rollout order:
 6. Add indexes for user dashboards, latest session lookup, and source retrieval.
 7. Add upload metadata after the core document table exists.
 8. Add parse outputs before background OCR and retrieval workers.
+9. Add background job rows before async worker orchestration ships.
 
 Rollback expectation: Day 03 migrations are reversible before production data is
 loaded. After real user data exists, rollback should be a forward migration that
@@ -175,8 +190,7 @@ UI responsibilities:
 API responsibilities:
 
 - Enforce authenticated user boundaries.
-- Parse files and normalize text.
-- Call retrieval or generation services.
+- Validate source submission and enqueue background jobs.
 - Pass persistence requests through repository services only.
 
 Repository responsibilities:
@@ -184,14 +198,18 @@ Repository responsibilities:
 - Generate public resource IDs.
 - Store documents, chunks, sessions, cards, and interactions.
 - Store extracted page text and parser diagnostics before generation.
+- Store background job payloads, attempts, and dead-letter state.
 - Return only rows owned by the authenticated user.
 - Keep local JSON storage and future Postgres storage behind the same service
   boundary.
 
 Worker responsibilities:
 
-- Later background jobs will read pending documents, fill chunk embeddings, run
-  retrieval and reranking, and update sessions through repository services.
+- Claim queued document jobs and move documents into `processing`.
+- Parse source input, persist diagnostics, and generate grounded cards.
+- Retry transient failures and dead-letter exhausted jobs explicitly.
+- Later workers can fill chunk embeddings, run retrieval and reranking, and
+  extend the same repository boundary.
 
 ## Local Reset And Fixtures
 

@@ -147,7 +147,10 @@ test("study feed route returns explicit parse failure contracts", async () => {
   process.env.ENABLE_LIVE_GENERATION = "false";
 
   try {
-    const { POST } = await import("../src/app/api/study-feed/route.js");
+    const { POST, GET } = await import("../src/app/api/study-feed/route.js");
+    const { processDocumentProcessingJob } = await import(
+      "../src/lib/jobs/document-processing-worker.js"
+    );
     const sessionCookie = serializeProductSession(
       createAuthenticatedProductSession({
         userId: "parse-route-reader",
@@ -175,9 +178,23 @@ test("study feed route returns explicit parse failure contracts", async () => {
     );
     const payload = await response.json();
 
-    assert.equal(response.status, 400);
-    assert.equal(payload.parse.status, PDF_PARSE_STATUSES.PARSE_FAILED);
-    assert.equal(payload.parse.code, PDF_PARSE_CODES.PARSER_ERROR);
+    assert.equal(response.status, 202);
+    await processDocumentProcessingJob({ jobId: payload.job.id });
+
+    const workspaceResponse = await GET(
+      new Request("http://localhost/api/study-feed", {
+        method: "GET",
+        headers: {
+          cookie: `attention_regain_session=${sessionCookie}`,
+        },
+      }),
+    );
+    const workspace = await workspaceResponse.json();
+
+    assert.equal(workspaceResponse.status, 200);
+    assert.equal(workspace.document.status, PDF_PARSE_STATUSES.PARSE_FAILED);
+    assert.equal(workspace.document.parseStatus, PDF_PARSE_STATUSES.PARSE_FAILED);
+    assert.match(workspace.document.failureReason, /could not be parsed/i);
   } finally {
     if (typeof previousDataDir === "string") {
       process.env.ATTENTION_REGAIN_DATA_DIR = previousDataDir;

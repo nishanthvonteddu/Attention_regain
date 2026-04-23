@@ -7,6 +7,7 @@ import {
   createAuthenticatedProductSession,
   serializeProductSession,
 } from "../src/lib/auth/session-shared.js";
+import { processDocumentProcessingJob } from "../src/lib/jobs/document-processing-worker.js";
 
 const FIXTURES = [
   "/Users/work/Downloads/AIAYN.pdf",
@@ -39,7 +40,7 @@ test("local PDF fixtures generate grounded fallback decks when available", async
   delete process.env.NVIDIA_TEXT_API_KEY;
   delete process.env.NVIDIA_API_KEY;
 
-  const { POST } = await import("../src/app/api/study-feed/route.js");
+  const { POST, GET } = await import("../src/app/api/study-feed/route.js");
   const sessionCookie = serializeProductSession(
     createAuthenticatedProductSession({
       userId: "local-reader",
@@ -72,14 +73,27 @@ test("local PDF fixtures generate grounded fallback decks when available", async
         );
         const payload = await response.json();
 
-        assert.equal(response.status, 200);
-        assert.equal(payload.generationMode, "fallback");
-        assert.equal(payload.stats.parseStatus, "parsed");
-        assert.ok(payload.stats.pageCount > 0);
-        assert.ok(payload.stats.extractedWordCount > 0);
-        assert.ok(Array.isArray(payload.cards));
-        assert.ok(payload.cards.length > 0);
-        assert.ok(payload.cards.every((card) => /^Page \d+/.test(card.citation)));
+        assert.equal(response.status, 202);
+        await processDocumentProcessingJob({ jobId: payload.job.id });
+
+        const workspaceResponse = await GET(
+          new Request("http://localhost/api/study-feed", {
+            method: "GET",
+            headers: {
+              cookie: `attention_regain_session=${sessionCookie}`,
+            },
+          }),
+        );
+        const workspace = await workspaceResponse.json();
+
+        assert.equal(workspaceResponse.status, 200);
+        assert.equal(workspace.deck.generationMode, "fallback");
+        assert.equal(workspace.deck.stats.parseStatus, "parsed");
+        assert.ok(workspace.deck.stats.pageCount > 0);
+        assert.ok(workspace.deck.stats.extractedWordCount > 0);
+        assert.ok(Array.isArray(workspace.deck.cards));
+        assert.ok(workspace.deck.cards.length > 0);
+        assert.ok(workspace.deck.cards.every((card) => /^Page \d+/.test(card.citation)));
       });
     }
   } finally {

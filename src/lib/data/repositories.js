@@ -10,6 +10,9 @@ import { createLocalJsonStore } from "./local-store.js";
 
 export function createStudyRepository({ store = createLocalJsonStore() } = {}) {
   return {
+    createDocumentRecord(input) {
+      return createDocumentRecord(store, input);
+    },
     createDocumentUpload(input) {
       return createDocumentUpload(store, input);
     },
@@ -28,11 +31,29 @@ export function createStudyRepository({ store = createLocalJsonStore() } = {}) {
     getDocumentParseForUser(userId, documentId) {
       return getDocumentParseForUser(store, userId, documentId);
     },
+    enqueueDocumentProcessingJob(input) {
+      return enqueueDocumentProcessingJob(store, input);
+    },
+    claimDocumentProcessingJob(input) {
+      return claimDocumentProcessingJob(store, input);
+    },
+    completeDocumentProcessingJob(input) {
+      return completeDocumentProcessingJob(store, input);
+    },
+    failDocumentProcessingJob(input) {
+      return failDocumentProcessingJob(store, input);
+    },
+    getDocumentProcessingJob(jobId) {
+      return getDocumentProcessingJob(store, jobId);
+    },
     saveGeneratedDeck(input) {
       return saveGeneratedDeck(store, input);
     },
     getLatestDeckForUser(userId) {
       return getLatestDeckForUser(store, userId);
+    },
+    getLatestWorkspaceForUser(userId) {
+      return getLatestWorkspaceForUser(store, userId);
     },
     recordInteraction(input) {
       return recordInteraction(store, input);
@@ -45,6 +66,50 @@ export function createStudyRepository({ store = createLocalJsonStore() } = {}) {
 
 export function getDefaultStudyRepository() {
   return createStudyRepository();
+}
+
+async function createDocumentRecord(store, input) {
+  const userId = requireNonEmpty(input.user?.id, "user.id");
+  const documentId = typeof input.documentId === "string" && input.documentId.trim()
+    ? input.documentId.trim()
+    : createPublicId("doc");
+  const title = requireNonEmpty(input.title, "title");
+  const sourceKind = normalizeSourceKind(input.sourceKind);
+  const timestamp = nowIso();
+  const documentRow = {
+    id: documentId,
+    userId,
+    title,
+    sourceKind,
+    sourceRef: typeof input.sourceRef === "string" ? input.sourceRef : "",
+    goal: typeof input.goal === "string" && input.goal.trim()
+      ? input.goal.trim()
+      : "stay close to the material when attention slips",
+    status: "draft",
+    contentHash: "",
+    wordCount: 0,
+    pageCount: 0,
+    parseStatus: null,
+    createdAt: timestamp,
+    updatedAt: timestamp,
+    parsedAt: null,
+    failedAt: null,
+    failureReason: "",
+  };
+
+  await store.update((current) => ({
+    ...current,
+    users: upsertById(current.users, {
+      id: userId,
+      email: typeof input.user.email === "string" ? input.user.email : "",
+      displayName: typeof input.user.displayName === "string" ? input.user.displayName : "",
+      createdAt: timestamp,
+      updatedAt: timestamp,
+    }),
+    documents: [...current.documents, documentRow],
+  }));
+
+  return documentRow;
 }
 
 async function createDocumentUpload(store, input) {
@@ -326,6 +391,223 @@ async function getDocumentParseForUser(store, userId, documentId) {
   };
 }
 
+async function enqueueDocumentProcessingJob(store, input) {
+  const userId = requireNonEmpty(input.userId, "userId");
+  const documentId = requireNonEmpty(input.documentId, "documentId");
+  const payload = input.payload && typeof input.payload === "object" ? input.payload : null;
+  if (!payload) {
+    throw new Error("Document processing jobs require a payload.");
+  }
+
+  const queueName = requireNonEmpty(input.queueName, "queueName");
+  const timestamp = nowIso();
+  const job = {
+    id: createPublicId("job"),
+    userId,
+    documentId,
+    queueName,
+    status: "queued",
+    attemptCount: 0,
+    maxAttempts: requirePositiveInteger(input.maxAttempts || 3, "maxAttempts"),
+    payload,
+    resultStatus: "",
+    availableAt: timestamp,
+    startedAt: null,
+    completedAt: null,
+    deadLetteredAt: null,
+    leaseOwner: "",
+    leaseExpiresAt: null,
+    lastError: "",
+    lastErrorCode: "",
+    createdAt: timestamp,
+    updatedAt: timestamp,
+  };
+
+  await store.update((current) => {
+    const document = current.documents.find(
+      (entry) => entry.id === documentId && entry.userId === userId,
+    );
+    if (!document) {
+      throw new Error("Document upload was not found for this user.");
+    }
+
+    return {
+      ...current,
+      documents: current.documents.map((entry) =>
+        entry.id === documentId && entry.userId === userId
+          ? {
+              ...entry,
+              status: "queued",
+              updatedAt: timestamp,
+              failedAt: null,
+              failureReason: "",
+            }
+          : entry),
+      documentJobs: [...current.documentJobs, job],
+    };
+  });
+
+  return job;
+}
+
+async function claimDocumentProcessingJob(store, input) {
+  const jobId = requireNonEmpty(input.jobId, "jobId");
+  const workerId = requireNonEmpty(input.workerId, "workerId");
+  const leaseMs = Math.max(1_000, Number(input.leaseMs) || 60_000);
+  const timestamp = Date.now();
+  const now = new Date(timestamp).toISOString();
+  const leaseExpiresAt = new Date(timestamp + leaseMs).toISOString();
+  let claimedJob = null;
+
+  await store.update((current) => {
+    const job = current.documentJobs.find((entry) => entry.id === jobId);
+    if (!job) {
+      return current;
+    }
+
+    const availableAt = job.availableAt ? Date.parse(job.availableAt) : 0;
+    const leaseExpired = !job.leaseExpiresAt || Date.parse(job.leaseExpiresAt) <= timestamp;
+    const canClaim =
+      (job.status === "queued" || job.status === "retrying") && availableAt <= timestamp;
+    const canRecover = job.status === "processing" && leaseExpired;
+    if (!canClaim && !canRecover) {
+      return current;
+    }
+
+    claimedJob = {
+      ...job,
+      status: "processing",
+      attemptCount: job.attemptCount + 1,
+      startedAt: now,
+      updatedAt: now,
+      leaseOwner: workerId,
+      leaseExpiresAt,
+    };
+
+    return {
+      ...current,
+      documents: current.documents.map((entry) =>
+        entry.id === job.documentId && entry.userId === job.userId
+          ? {
+              ...entry,
+              status: "processing",
+              updatedAt: now,
+              failedAt: null,
+              failureReason: "",
+            }
+          : entry),
+      documentJobs: current.documentJobs.map((entry) =>
+        entry.id === job.id ? claimedJob : entry),
+    };
+  });
+
+  return claimedJob;
+}
+
+async function completeDocumentProcessingJob(store, input) {
+  const jobId = requireNonEmpty(input.jobId, "jobId");
+  const timestamp = nowIso();
+  let completedJob = null;
+
+  await store.update((current) => {
+    const job = current.documentJobs.find((entry) => entry.id === jobId);
+    if (!job) {
+      throw new Error("Document processing job was not found.");
+    }
+
+    completedJob = {
+      ...job,
+      status: "succeeded",
+      resultStatus: typeof input.resultStatus === "string" ? input.resultStatus : job.resultStatus,
+      completedAt: timestamp,
+      updatedAt: timestamp,
+      leaseOwner: "",
+      leaseExpiresAt: null,
+    };
+
+    return {
+      ...current,
+      documentJobs: current.documentJobs.map((entry) =>
+        entry.id === jobId ? completedJob : entry),
+    };
+  });
+
+  return completedJob;
+}
+
+async function failDocumentProcessingJob(store, input) {
+  const jobId = requireNonEmpty(input.jobId, "jobId");
+  const errorMessage = requireNonEmpty(input.errorMessage, "errorMessage");
+  const errorCode = typeof input.errorCode === "string" ? input.errorCode : "";
+  const timestamp = Date.now();
+  const now = new Date(timestamp).toISOString();
+  const retryDelayMs = Math.max(250, Number(input.retryDelayMs) || 750);
+  let failedJob = null;
+
+  await store.update((current) => {
+    const job = current.documentJobs.find((entry) => entry.id === jobId);
+    if (!job) {
+      throw new Error("Document processing job was not found.");
+    }
+
+    const canRetry = job.attemptCount < job.maxAttempts;
+    failedJob = {
+      ...job,
+      status: canRetry ? "retrying" : "dead_letter",
+      availableAt: canRetry ? new Date(timestamp + retryDelayMs).toISOString() : job.availableAt,
+      updatedAt: now,
+      deadLetteredAt: canRetry ? null : now,
+      leaseOwner: "",
+      leaseExpiresAt: null,
+      lastError: errorMessage,
+      lastErrorCode: errorCode,
+      retryDelayMs: canRetry ? retryDelayMs : 0,
+    };
+
+    return {
+      ...current,
+      documents: current.documents.map((entry) =>
+        entry.id === job.documentId && entry.userId === job.userId
+          ? canRetry
+            ? {
+                ...entry,
+                status: "queued",
+                updatedAt: now,
+                failedAt: null,
+                failureReason: "",
+              }
+            : {
+                ...entry,
+                status: "failed",
+                updatedAt: now,
+                failedAt: now,
+                failureReason: errorMessage,
+              }
+          : entry),
+      documentUploads: current.documentUploads.map((entry) =>
+        entry.documentId === job.documentId && entry.userId === job.userId && !canRetry
+          ? {
+              ...entry,
+              status: "failed",
+              updatedAt: now,
+              failedAt: now,
+              failureReason: errorMessage,
+            }
+          : entry),
+      documentJobs: current.documentJobs.map((entry) =>
+        entry.id === jobId ? failedJob : entry),
+    };
+  });
+
+  return failedJob;
+}
+
+async function getDocumentProcessingJob(store, jobId) {
+  const targetJobId = requireNonEmpty(jobId, "jobId");
+  const current = await store.read();
+  return current.documentJobs.find((entry) => entry.id === targetJobId) || null;
+}
+
 async function saveGeneratedDeck(store, input) {
   const userId = requireNonEmpty(input.user?.id, "user.id");
   const title = requireNonEmpty(input.documentTitle, "documentTitle");
@@ -503,6 +785,36 @@ async function getLatestDeckForUser(store, userId) {
   return buildDeckResponse({ document, session, cards });
 }
 
+async function getLatestWorkspaceForUser(store, userId) {
+  const ownerId = requireNonEmpty(userId, "userId");
+  const current = await store.read();
+  const document = current.documents
+    .filter((entry) => entry.userId === ownerId)
+    .sort((left, right) => String(right.updatedAt).localeCompare(String(left.updatedAt)))[0];
+
+  if (!document) {
+    return { document: null, job: null, deck: null };
+  }
+
+  const job = current.documentJobs
+    .filter((entry) => entry.documentId === document.id && entry.userId === ownerId)
+    .sort((left, right) => String(right.createdAt).localeCompare(String(left.createdAt)))[0] || null;
+  const session = current.studySessions
+    .filter((entry) => entry.documentId === document.id && entry.userId === ownerId)
+    .sort((left, right) => String(right.createdAt).localeCompare(String(left.createdAt)))[0] || null;
+  const cards = session?.status === "ready"
+    ? current.studyCards
+      .filter((entry) => entry.sessionId === session.id)
+      .sort((left, right) => left.sequence - right.sequence)
+    : [];
+
+  return {
+    document: buildDocumentResponse(document),
+    job: buildJobResponse(job),
+    deck: session?.status === "ready" ? buildDeckResponse({ document, session, cards }) : null,
+  };
+}
+
 async function recordInteraction(store, input) {
   const userId = requireNonEmpty(input.userId, "userId");
   const sessionId = requireNonEmpty(input.sessionId, "sessionId");
@@ -575,6 +887,49 @@ function buildDeckResponse({ document, session, cards }) {
       adapter: "local-json",
       serverStored: true,
     },
+  };
+}
+
+function buildDocumentResponse(document) {
+  if (!document) {
+    return null;
+  }
+
+  return {
+    id: document.id,
+    title: document.title,
+    goal: document.goal,
+    sourceKind: document.sourceKind,
+    status: document.status,
+    parseStatus: document.parseStatus || null,
+    pageCount: document.pageCount || 0,
+    wordCount: document.wordCount || 0,
+    updatedAt: document.updatedAt,
+    failedAt: document.failedAt,
+    failureReason: document.failureReason || "",
+  };
+}
+
+function buildJobResponse(job) {
+  if (!job) {
+    return null;
+  }
+
+  const active = job.status === "queued" || job.status === "processing" || job.status === "retrying";
+  return {
+    id: job.id,
+    queueName: job.queueName,
+    status: job.status,
+    active,
+    attemptCount: job.attemptCount,
+    maxAttempts: job.maxAttempts,
+    availableAt: job.availableAt,
+    startedAt: job.startedAt,
+    completedAt: job.completedAt,
+    deadLetteredAt: job.deadLetteredAt,
+    lastError: job.lastError || "",
+    lastErrorCode: job.lastErrorCode || "",
+    resultStatus: job.resultStatus || "",
   };
 }
 
