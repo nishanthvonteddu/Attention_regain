@@ -1,11 +1,13 @@
 import { createHash, randomUUID } from "node:crypto";
 
-export const DATA_MODEL_VERSION = 1;
+export const DATA_MODEL_VERSION = 2;
 
 export const SOURCE_KINDS = Object.freeze(["paste", "file", "pdf"]);
 export const DOCUMENT_STATUSES = Object.freeze([
   "draft",
   "uploaded",
+  "queued",
+  "processing",
   "parsed",
   "chunked",
   "cards_generated",
@@ -22,6 +24,13 @@ export const UPLOAD_STATUSES = Object.freeze([
   "consumed",
   "failed",
 ]);
+export const JOB_STATUSES = Object.freeze([
+  "queued",
+  "processing",
+  "retrying",
+  "succeeded",
+  "dead_letter",
+]);
 export const INTERACTION_TYPES = Object.freeze([
   "reveal_answer",
   "save_card",
@@ -37,6 +46,7 @@ const STATUS_SETS = {
   session: new Set(SESSION_STATUSES),
   card: new Set(CARD_STATUSES),
   upload: new Set(UPLOAD_STATUSES),
+  job: new Set(JOB_STATUSES),
   interaction: new Set(INTERACTION_TYPES),
 };
 
@@ -79,6 +89,7 @@ export function normalizeJsonStore(input = {}) {
     documentParseDiagnostics: Array.isArray(input.documentParseDiagnostics)
       ? input.documentParseDiagnostics
       : [],
+    documentJobs: Array.isArray(input.documentJobs) ? input.documentJobs : [],
     documentChunks: Array.isArray(input.documentChunks) ? input.documentChunks : [],
     studySessions: Array.isArray(input.studySessions) ? input.studySessions : [],
     studyCards: Array.isArray(input.studyCards) ? input.studyCards : [],
@@ -100,6 +111,10 @@ export function createEmptyJsonStore() {
       },
       {
         id: "0003_document_parse_outputs",
+        appliedAt: nowIso(),
+      },
+      {
+        id: "0004_document_processing_jobs",
         appliedAt: nowIso(),
       },
     ],
