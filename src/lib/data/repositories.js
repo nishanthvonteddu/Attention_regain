@@ -31,6 +31,9 @@ export function createStudyRepository({ store = createLocalJsonStore() } = {}) {
     getDocumentParseForUser(userId, documentId) {
       return getDocumentParseForUser(store, userId, documentId);
     },
+    saveDocumentChunks(input) {
+      return saveDocumentChunks(store, input);
+    },
     enqueueDocumentProcessingJob(input) {
       return enqueueDocumentProcessingJob(store, input);
     },
@@ -391,6 +394,52 @@ async function getDocumentParseForUser(store, userId, documentId) {
   };
 }
 
+async function saveDocumentChunks(store, input) {
+  const userId = requireNonEmpty(input.userId, "userId");
+  const documentId = requireNonEmpty(input.documentId, "documentId");
+  const chunks = Array.isArray(input.chunks) ? input.chunks : [];
+  if (!chunks.length) {
+    throw new Error("A parsed document needs at least one source chunk.");
+  }
+
+  const timestamp = nowIso();
+  const chunkRows = chunks.map((chunk, index) => normalizeChunkRow({
+    chunk,
+    documentId,
+    sequence: Number.isSafeInteger(chunk?.sequence) ? chunk.sequence : index,
+    timestamp,
+  }));
+  let persistedChunks = [];
+
+  await store.update((current) => {
+    const existingDocument = current.documents.find(
+      (entry) => entry.id === documentId && entry.userId === userId,
+    );
+    if (!existingDocument) {
+      throw new Error("Document upload was not found for this user.");
+    }
+
+    persistedChunks = chunkRows;
+    return {
+      ...current,
+      documents: current.documents.map((document) =>
+        document.id === documentId && document.userId === userId
+          ? {
+              ...document,
+              status: "chunked",
+              updatedAt: timestamp,
+            }
+          : document),
+      documentChunks: [
+        ...current.documentChunks.filter((chunk) => chunk.documentId !== documentId),
+        ...chunkRows,
+      ],
+    };
+  });
+
+  return persistedChunks;
+}
+
 async function enqueueDocumentProcessingJob(store, input) {
   const userId = requireNonEmpty(input.userId, "userId");
   const documentId = requireNonEmpty(input.documentId, "documentId");
@@ -627,26 +676,12 @@ async function saveGeneratedDeck(store, input) {
       : "";
   const documentId = requestedDocumentId || createPublicId("doc");
   const sessionId = createPublicId("session");
-  const chunkRows = passages.map((passage, index) => {
-    const text = String(passage.text || "");
-    const pageNumber = Number.isSafeInteger(passage.pageNumber)
-      ? passage.pageNumber
-      : extractPageNumber(passage.citation);
-    return {
-      id: createPublicId("chunk"),
-      documentId,
-      sequence: index,
-      citation: String(passage.citation || `Section ${index + 1}`),
-      pageNumber,
-      text,
-      topics: Array.isArray(passage.topics) ? passage.topics.map(String) : [],
-      tokenEstimate: estimateTokens(text),
-      embeddingStatus: "pending",
-      embeddingProvider: "",
-      embeddingModel: "",
-      createdAt: timestamp,
-    };
-  });
+  const chunkRows = passages.map((passage, index) => normalizeChunkRow({
+    chunk: passage,
+    documentId,
+    sequence: Number.isSafeInteger(passage?.sequence) ? passage.sequence : index,
+    timestamp,
+  }));
   const chunkByCitation = new Map(chunkRows.map((chunk) => [chunk.citation, chunk]));
   const cardRows = cards.map((card, index) => {
     const kind = ["glance", "recall", "application", "pitfall"].includes(card.kind)
@@ -703,13 +738,15 @@ async function saveGeneratedDeck(store, input) {
         (typeof input.sourceRef === "string" ? input.sourceRef : ""),
       goal,
       status: "cards_generated",
-      contentHash: hashSourceText(sourceText),
-      wordCount: sourceText.split(/\s+/).filter(Boolean).length,
+      contentHash: existingDocument?.contentHash || hashSourceText(sourceText),
+      wordCount:
+        existingDocument?.wordCount ||
+        sourceText.split(/\s+/).filter(Boolean).length,
       pageCount: existingDocument?.pageCount || countDistinctPageNumbers(chunkRows),
       parseStatus: existingDocument?.parseStatus || "parsed",
       createdAt: existingDocument?.createdAt || timestamp,
       updatedAt: timestamp,
-      parsedAt: timestamp,
+      parsedAt: existingDocument?.parsedAt || timestamp,
       failedAt: null,
       failureReason: "",
     };
@@ -744,7 +781,7 @@ async function saveGeneratedDeck(store, input) {
         userId,
         timestamp,
       ),
-      documentChunks: [...current.documentChunks, ...chunkRows],
+      documentChunks: mergeDeckChunks(current.documentChunks, chunkRows),
       studySessions: [...current.studySessions, sessionRow],
       studyCards: [...current.studyCards, ...cardRows],
     };
@@ -875,6 +912,7 @@ function buildDeckResponse({ document, session, cards }) {
       answer: card.answer || undefined,
       excerpt: card.excerpt,
       citation: card.citation,
+      chunkId: card.chunkId || undefined,
       status: card.status,
     })),
     generationMode: session.generationMode,
@@ -986,6 +1024,80 @@ function markConsumedUploadRows(rows, documentId, userId, timestamp) {
       consumedAt: timestamp,
     };
   });
+}
+
+function mergeDeckChunks(existingRows, deckRows) {
+  const deckById = new Map(deckRows.map((row) => [row.id, row]));
+  const mergedRows = existingRows.map((row) => {
+    const deckRow = deckById.get(row.id);
+    if (!deckRow) {
+      return row;
+    }
+
+    return {
+      ...row,
+      retrievalRank: deckRow.retrievalRank,
+      retrievalScore: deckRow.retrievalScore,
+      retrievalReason: deckRow.retrievalReason,
+      retrieval: deckRow.retrieval,
+    };
+  });
+  const existingIds = new Set(existingRows.map((row) => row.id));
+  const newRows = deckRows.filter((row) => !existingIds.has(row.id));
+  return [...mergedRows, ...newRows];
+}
+
+function normalizeChunkRow({ chunk, documentId, sequence, timestamp }) {
+  const text = String(chunk?.text || "").trim();
+  const citation = String(chunk?.citation || `Section ${sequence + 1}`).trim();
+  const pageNumber = Number.isSafeInteger(chunk?.pageNumber)
+    ? chunk.pageNumber
+    : extractPageNumber(citation);
+
+  return {
+    id: typeof chunk?.id === "string" && chunk.id.trim()
+      ? chunk.id.trim()
+      : createPublicId("chunk"),
+    documentId,
+    sequence,
+    citation,
+    pageNumber,
+    sectionLabel: typeof chunk?.sectionLabel === "string" ? chunk.sectionLabel : "",
+    paragraphStart: Number.isSafeInteger(chunk?.paragraphStart)
+      ? chunk.paragraphStart
+      : null,
+    paragraphEnd: Number.isSafeInteger(chunk?.paragraphEnd) ? chunk.paragraphEnd : null,
+    text,
+    sentences: Array.isArray(chunk?.sentences) ? chunk.sentences.map(String) : [],
+    topics: Array.isArray(chunk?.topics) ? chunk.topics.map(String) : [],
+    wordCount: Number.isSafeInteger(chunk?.wordCount)
+      ? chunk.wordCount
+      : text.split(/\s+/).filter(Boolean).length,
+    characterCount: Number.isSafeInteger(chunk?.characterCount)
+      ? chunk.characterCount
+      : text.length,
+    tokenEstimate: Number.isSafeInteger(chunk?.tokenEstimate)
+      ? chunk.tokenEstimate
+      : estimateTokens(text),
+    embeddingStatus: typeof chunk?.embeddingStatus === "string"
+      ? chunk.embeddingStatus
+      : "pending",
+    embeddingProvider: typeof chunk?.embeddingProvider === "string"
+      ? chunk.embeddingProvider
+      : "",
+    embeddingModel: typeof chunk?.embeddingModel === "string" ? chunk.embeddingModel : "",
+    retrievalRank: Number.isSafeInteger(chunk?.retrieval?.rank) ? chunk.retrieval.rank : null,
+    retrievalScore: Number.isFinite(chunk?.retrieval?.score) ? chunk.retrieval.score : null,
+    retrievalReason: typeof chunk?.retrieval?.reason === "string" ? chunk.retrieval.reason : "",
+    retrieval: chunk?.retrieval && typeof chunk.retrieval === "object"
+      ? {
+          rank: Number.isSafeInteger(chunk.retrieval.rank) ? chunk.retrieval.rank : null,
+          score: Number.isFinite(chunk.retrieval.score) ? chunk.retrieval.score : 0,
+          reason: typeof chunk.retrieval.reason === "string" ? chunk.retrieval.reason : "",
+        }
+      : null,
+    createdAt: timestamp,
+  };
 }
 
 function normalizePageInputs(pages = []) {
