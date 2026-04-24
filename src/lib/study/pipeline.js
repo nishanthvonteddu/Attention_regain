@@ -5,6 +5,10 @@ import {
   PDF_PARSE_STATUSES,
 } from "../documents/pdf-parser.js";
 import { DOCUMENT_JOB_SOURCE_TYPES } from "../jobs/document-processing.js";
+import {
+  buildDocumentChunks,
+  selectRetrievalPassages,
+} from "./chunking.js";
 
 const MAX_SOURCE_CHARS = 80_000;
 const MAX_PASSAGES = 8;
@@ -112,10 +116,20 @@ export async function runDocumentPipeline({
     diagnostics: extraction.diagnostics,
   });
 
-  const passages = createPassages(pages);
-  if (!passages.length) {
+  const chunks = buildDocumentChunks(pages);
+  if (!chunks.length) {
     throw new Error("The source did not produce enough readable passages to build cards.");
   }
+  const persistedChunks = await repository.saveDocumentChunks({
+    userId: user.id,
+    documentId,
+    chunks,
+  });
+  const retrieval = selectRetrievalPassages(persistedChunks, {
+    title: extraction.title || title,
+    goal,
+  });
+  const passages = retrieval.passages;
 
   const wordCount = sourceText.split(/\s+/).filter(Boolean).length;
   const baseDeck = {
@@ -124,7 +138,10 @@ export async function runDocumentPipeline({
     sourceKind: extraction.sourceKind,
     stats: {
       estimatedMinutes: Math.max(4, Math.round(wordCount / 180)),
-      chunkCount: passages.length,
+      chunkCount: chunks.length,
+      retrievedChunkCount: passages.length,
+      retrievalStrategy: retrieval.stats.strategy,
+      retrievalLowConfidence: retrieval.stats.lowConfidence,
       parseStatus: extraction.status,
       pageCount: extraction.diagnostics?.pageCount || pages.length,
       extractedWordCount: extraction.diagnostics?.wordCount || wordCount,
