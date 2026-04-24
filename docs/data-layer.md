@@ -53,9 +53,12 @@ Statuses:
 ### document_chunks
 
 Stores normalized source slices used for retrieval and grounded generation.
-Chunks belong to one document and include stable citation text such as `Page 2`.
-Embedding vectors are planned for the hosted adapter; the initial migration keeps
-provider metadata and vector status separate from the chunk text.
+Chunks belong to one document and include stable citation text such as
+`Page 2, paragraphs 3-4`. They also store page number, section label,
+paragraph range, sequence, text counts, topic hints, retrieval rank, retrieval
+score, and retrieval reason. Embedding vectors are planned for the hosted
+adapter; the current local baseline keeps provider metadata and vector status
+separate from chunk text while deterministic retrieval selects generation input.
 
 ### document_pages
 
@@ -162,6 +165,13 @@ Migration `0004_document_processing_jobs.sql` adds:
 - `document_processing_jobs` for queue payloads, retries, and dead-letter state
 - lease metadata so a worker can recover stalled jobs
 
+Migration `0005_chunk_retrieval_metadata.sql` adds:
+
+- section and paragraph metadata on chunks
+- text counts for retrieval tuning and regression checks
+- retrieval rank, score, and reason fields for selected generation chunks
+- indexes for page/paragraph and retrieval-ranked chunk lookups
+
 Rollout order:
 
 1. Create owner table and document tables.
@@ -173,6 +183,7 @@ Rollout order:
 7. Add upload metadata after the core document table exists.
 8. Add parse outputs before background OCR and retrieval workers.
 9. Add background job rows before async worker orchestration ships.
+10. Add chunk retrieval metadata before grounded generation hardening.
 
 Rollback expectation: Day 03 migrations are reversible before production data is
 loaded. After real user data exists, rollback should be a forward migration that
