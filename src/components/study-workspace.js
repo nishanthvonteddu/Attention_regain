@@ -271,6 +271,45 @@ export function StudyWorkspace() {
     }
   }
 
+  async function handleRetryProcessing() {
+    if (!workspaceState?.document?.id) {
+      return;
+    }
+
+    setError("");
+    setIsSubmitting(true);
+    setStatusMessage("Retrying background generation for the active document.");
+
+    try {
+      const formData = new FormData();
+      formData.set("retryDocumentId", workspaceState.document.id);
+      const response = await fetch("/api/study-feed", {
+        method: "POST",
+        body: formData,
+      });
+      const payload = await response.json();
+
+      if (!response.ok) {
+        throw new Error(payload.error || "Could not retry background generation.");
+      }
+
+      startTransition(() => {
+        setWorkspaceState(payload);
+        setDeck(payload.deck || null);
+      });
+      setUploadStatus(buildProcessingBadge(payload));
+      setStatusMessage(describeWorkspaceStatus(payload));
+    } catch (caughtError) {
+      setError(
+        caughtError instanceof Error
+          ? caughtError.message
+          : "Could not retry background generation.",
+      );
+    } finally {
+      setIsSubmitting(false);
+    }
+  }
+
   function applySample() {
     setTitle(SAMPLE_SOURCE.title);
     setGoal(SAMPLE_SOURCE.goal);
@@ -776,6 +815,17 @@ export function StudyWorkspace() {
                     {workspaceState?.document?.failureReason ? (
                       <p>{workspaceState.document.failureReason}</p>
                     ) : null}
+                    {isRecoverableWorkspace(workspaceState) ? (
+                      <button
+                        className="primary-button"
+                        disabled={busy}
+                        onClick={handleRetryProcessing}
+                        style={{ marginTop: 14 }}
+                        type="button"
+                      >
+                        {busy ? "Retrying..." : "Retry generation"}
+                      </button>
+                    ) : null}
                   </div>
                 </article>
               </div>
@@ -794,6 +844,15 @@ function Metric({ label, value }) {
       <strong>{value}</strong>
     </div>
   );
+}
+
+function isRecoverableWorkspace(workspaceState) {
+  const status = workspaceState?.document?.status;
+  if (!workspaceState?.document?.id || !status) {
+    return false;
+  }
+
+  return status === "failed" || status === "parse_failed" || status === "ocr_needed";
 }
 
 function buildProcessingBadge(workspaceState) {
