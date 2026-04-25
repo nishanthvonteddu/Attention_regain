@@ -9,6 +9,11 @@ import {
   buildDocumentChunks,
   selectRetrievalPassages,
 } from "./chunking.js";
+import {
+  buildGeneratedCardContract,
+  GenerationContractError,
+  validateGeneratedDeckContract,
+} from "./card-contract.js";
 
 const MAX_SOURCE_CHARS = 80_000;
 const MAX_PASSAGES = 8;
@@ -150,12 +155,12 @@ export async function runDocumentPipeline({
 
   const environment = getEnvironmentReport(env);
   if (!environment.generation.enabled) {
-    const fallbackCards = createCards(passages, goal);
+    const fallbackDeck = buildFallbackDeck({ passages, goal });
     return persistDeck({
       payload: {
         ...baseDeck,
-        focusTags: collectFocusTags(passages),
-        cards: fallbackCards,
+        focusTags: fallbackDeck.focusTags,
+        cards: fallbackDeck.cards,
         generationMode: "fallback",
         model: "heuristic-fallback",
         warning: environment.generation.explicitlyEnabled
@@ -163,7 +168,8 @@ export async function runDocumentPipeline({
           : undefined,
         stats: {
           ...baseDeck.stats,
-          cardCount: fallbackCards.length,
+          ...fallbackDeck.stats,
+          cardCount: fallbackDeck.cards.length,
         },
       },
       passages,
@@ -191,6 +197,7 @@ export async function runDocumentPipeline({
         model: environment.generation.model,
         stats: {
           ...baseDeck.stats,
+          ...aiDeck.stats,
           cardCount: aiDeck.cards.length,
         },
       },
@@ -200,24 +207,24 @@ export async function runDocumentPipeline({
       documentId,
     });
   } catch (generationError) {
-    const fallbackCards = createCards(passages, goal);
+    const fallbackDeck = buildFallbackDeck({ passages, goal });
+    const generationFailure = describeGenerationFailure(generationError);
     return persistDeck({
       payload: {
         ...baseDeck,
-        focusTags: collectFocusTags(passages),
-        cards: fallbackCards,
+        focusTags: fallbackDeck.focusTags,
+        cards: fallbackDeck.cards,
         generationMode: "fallback",
         model:
           generationError instanceof Error
             ? `fallback-after-${environment.generation.model}`
             : "heuristic-fallback",
-        warning:
-          generationError instanceof Error
-            ? generationError.message
-            : "The NVIDIA generation request failed, so the heuristic fallback was used.",
+        warning: generationFailure.message,
         stats: {
           ...baseDeck.stats,
-          cardCount: fallbackCards.length,
+          ...fallbackDeck.stats,
+          generationFailure,
+          cardCount: fallbackDeck.cards.length,
         },
       },
       passages,
@@ -314,6 +321,14 @@ async function persistDeck({
   user,
   documentId,
 }) {
+  const validated = validateGeneratedDeckContract({
+    payload: {
+      focusTags: payload.focusTags,
+      cards: payload.cards,
+    },
+    passages,
+    allowRepair: false,
+  });
   const persisted = await repository.saveGeneratedDeck({
     user,
     documentId,
@@ -322,11 +337,14 @@ async function persistDeck({
     sourceKind: payload.sourceKind,
     sourceRef: payload.sourceRef || payload.documentTitle,
     passages,
-    focusTags: payload.focusTags,
-    cards: payload.cards,
+    focusTags: validated.focusTags,
+    cards: validated.cards,
     generationMode: payload.generationMode,
     model: payload.model,
-    stats: payload.stats,
+    stats: {
+      ...payload.stats,
+      ...validated.stats,
+    },
   });
 
   return {
@@ -377,15 +395,19 @@ async function generateDeckWithNvidia({ documentTitle, goal, passages, apiKey, m
     payload?.choices?.[0]?.text ||
     "";
   const parsed = parseModelJson(rawContent);
-  const cards = normalizeCards(parsed.cards, passages);
+  const validated = validateGeneratedDeckContract({
+    payload: parsed,
+    passages,
+  });
 
-  if (!cards.length) {
+  if (!validated.cards.length) {
     throw new Error("The model response did not contain valid study cards.");
   }
 
   return {
-    focusTags: normalizeTags(parsed.focusTags, passages),
-    cards,
+    focusTags: validated.focusTags,
+    cards: validated.cards,
+    stats: validated.stats,
   };
 }
 
@@ -394,8 +416,9 @@ function buildGenerationPrompt({ documentTitle, goal, passages }) {
     .map((passage, index) => {
       return [
         `Passage ${index + 1}`,
+        `Chunk ID: ${passage.id || `passage-${index + 1}`}`,
         `Citation: ${passage.citation}`,
-        `Topics: ${passage.topics.join(", ") || "None"}`,
+        `Topics: ${(Array.isArray(passage.topics) ? passage.topics : []).join(", ") || "None"}`,
         `Text: ${passage.text}`,
       ].join("\n");
     })
@@ -409,6 +432,7 @@ function buildGenerationPrompt({ documentTitle, goal, passages }) {
     "",
     "Return a JSON object with this exact shape:",
     "{",
+    `  "contractVersion": "${buildGeneratedCardContract().version}",`,
     '  "focusTags": ["tag1", "tag2", "tag3", "tag4"],',
     '  "cards": [',
     "    {",
@@ -418,7 +442,11 @@ function buildGenerationPrompt({ documentTitle, goal, passages }) {
     '      "question": "optional prompt for recall/application/pitfall",',
     '      "answer": "optional answer for recall/application/pitfall",',
     '      "excerpt": "short grounded excerpt from the passage",',
-    '      "citation": "must match one of the given citations exactly"',
+    '      "citation": "must match one of the given citations exactly",',
+    '      "sourceReference": {',
+    '        "chunkId": "must match the cited passage chunk id",',
+    '        "citation": "must match citation exactly"',
+    "      }",
     "    }",
     "  ]",
     "}",
@@ -429,6 +457,9 @@ function buildGenerationPrompt({ documentTitle, goal, passages }) {
     "- Keep the cards useful for quick scrolling, not long essays.",
     "- Every card must stay grounded in the provided passages.",
     "- Never cite anything except the provided citations.",
+    "- Include a sourceReference object on every card.",
+    "- The excerpt must be copied or tightly paraphrased from the cited passage.",
+    "- Recall, application, and pitfall cards must include both question and answer.",
     "- Keep titles under 70 characters.",
     "- Keep excerpts short and verbatim-friendly, but do not overquote.",
     "",
@@ -591,61 +622,47 @@ function parseModelJson(content) {
     .replace(/^```\s*/i, "")
     .replace(/\s*```$/, "");
 
-  return JSON.parse(normalized);
+  try {
+    return JSON.parse(normalized);
+  } catch (error) {
+    const start = normalized.indexOf("{");
+    const end = normalized.lastIndexOf("}");
+    if (start >= 0 && end > start) {
+      return JSON.parse(normalized.slice(start, end + 1));
+    }
+    throw error;
+  }
 }
 
-function normalizeTags(tags, passages) {
-  if (!Array.isArray(tags)) {
-    return collectFocusTags(passages);
-  }
-
-  const normalized = tags
-    .map((tag) => String(tag || "").trim())
-    .filter(Boolean)
-    .slice(0, 4);
-
-  return normalized.length ? normalized : collectFocusTags(passages);
+function buildFallbackDeck({ passages, goal }) {
+  return validateGeneratedDeckContract({
+    payload: {
+      focusTags: collectFocusTags(passages),
+      cards: createCards(passages, goal),
+    },
+    passages,
+  });
 }
 
-function normalizeCards(cards, passages) {
-  if (!Array.isArray(cards)) {
-    return [];
+function describeGenerationFailure(error) {
+  if (error instanceof GenerationContractError) {
+    return {
+      code: error.code,
+      message: error.message,
+      issueCount: error.issues.length,
+      retryable: true,
+    };
   }
 
-  const validKinds = new Set(["glance", "recall", "application", "pitfall"]);
-  const validCitations = new Set(passages.map((passage) => passage.citation));
-
-  return cards
-    .map((card, index) => {
-      const citation = String(card?.citation || "").trim();
-      if (!validCitations.has(citation)) {
-        return null;
-      }
-
-      const kind = validKinds.has(card?.kind) ? card.kind : "glance";
-      const title = trimText(String(card?.title || "").trim(), 70);
-      const body = trimText(String(card?.body || "").trim(), 240);
-      const excerpt = trimText(String(card?.excerpt || "").trim(), 170);
-      const question = trimText(String(card?.question || "").trim(), 220);
-      const answer = trimText(String(card?.answer || "").trim(), 220);
-
-      if (!title || !body || !excerpt) {
-        return null;
-      }
-
-      return {
-        id: `card-${index + 1}`,
-        kind,
-        title,
-        body,
-        question: question || undefined,
-        answer: answer || undefined,
-        excerpt,
-        citation,
-      };
-    })
-    .filter(Boolean)
-    .slice(0, 16);
+  return {
+    code: "generation_request_failed",
+    message:
+      error instanceof Error
+        ? error.message
+        : "The NVIDIA generation request failed, so the heuristic fallback was used.",
+    issueCount: 0,
+    retryable: true,
+  };
 }
 
 function createGlanceCard(passage, index) {
