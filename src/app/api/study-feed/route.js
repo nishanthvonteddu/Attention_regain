@@ -36,6 +36,49 @@ export async function POST(request) {
     const sourceText = String(formData.get("sourceText") || "");
     const uploaded = formData.get("file");
     const uploadDocumentId = String(formData.get("uploadDocumentId") || "").trim();
+    const retryDocumentId = String(formData.get("retryDocumentId") || "").trim();
+
+    if (retryDocumentId) {
+      const retryJob = await repository.getLatestDocumentProcessingJobForUser(
+        session.user.id,
+        retryDocumentId,
+      );
+      if (!retryJob) {
+        return Response.json(
+          { error: "No prior processing job was found for this document." },
+          { status: 404 },
+        );
+      }
+      const retryJobIsActive =
+        retryJob.status === "queued" ||
+        retryJob.status === "processing" ||
+        retryJob.status === "retrying";
+      if (retryJobIsActive) {
+        return Response.json(
+          { error: "This document already has active processing in progress." },
+          { status: 409 },
+        );
+      }
+
+      const job = await repository.enqueueDocumentProcessingJob({
+        userId: session.user.id,
+        documentId: retryDocumentId,
+        queueName: DOCUMENT_PROCESSING_QUEUE,
+        maxAttempts: DOCUMENT_PROCESSING_MAX_ATTEMPTS,
+        payload: retryJob.payload,
+      });
+
+      scheduleDocumentProcessingJob({ jobId: job.id, repository });
+
+      return Response.json(
+        {
+          accepted: true,
+          retried: true,
+          ...(await repository.getLatestWorkspaceForUser(session.user.id)),
+        },
+        { status: 202 },
+      );
+    }
 
     if (!(uploaded instanceof File) && !sourceText.trim()) {
       return Response.json(

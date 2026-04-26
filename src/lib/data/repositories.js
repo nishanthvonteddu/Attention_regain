@@ -7,6 +7,7 @@ import {
   nowIso,
 } from "./schema.js";
 import { createLocalJsonStore } from "./local-store.js";
+import { assertPersistableGeneratedDeck } from "../study/card-contract.js";
 
 export function createStudyRepository({ store = createLocalJsonStore() } = {}) {
   return {
@@ -48,6 +49,9 @@ export function createStudyRepository({ store = createLocalJsonStore() } = {}) {
     },
     getDocumentProcessingJob(jobId) {
       return getDocumentProcessingJob(store, jobId);
+    },
+    getLatestDocumentProcessingJobForUser(userId, documentId) {
+      return getLatestDocumentProcessingJobForUser(store, userId, documentId);
     },
     saveGeneratedDeck(input) {
       return saveGeneratedDeck(store, input);
@@ -657,17 +661,28 @@ async function getDocumentProcessingJob(store, jobId) {
   return current.documentJobs.find((entry) => entry.id === targetJobId) || null;
 }
 
+async function getLatestDocumentProcessingJobForUser(store, userId, documentId) {
+  const ownerId = requireNonEmpty(userId, "userId");
+  const targetDocumentId = requireNonEmpty(documentId, "documentId");
+  const current = await store.read();
+  return current.documentJobs
+    .filter((entry) => entry.userId === ownerId && entry.documentId === targetDocumentId)
+    .sort((left, right) => String(right.createdAt).localeCompare(String(left.createdAt)))[0] || null;
+}
+
 async function saveGeneratedDeck(store, input) {
   const userId = requireNonEmpty(input.user?.id, "user.id");
   const title = requireNonEmpty(input.documentTitle, "documentTitle");
   const goal = requireNonEmpty(input.goal, "goal");
   const sourceKind = normalizeSourceKind(input.sourceKind);
   const passages = Array.isArray(input.passages) ? input.passages : [];
-  const cards = Array.isArray(input.cards) ? input.cards : [];
+  const rawCards = Array.isArray(input.cards) ? input.cards : [];
 
-  if (!cards.length) {
+  if (!rawCards.length) {
     throw new Error("A persisted study session needs at least one card.");
   }
+  const validatedDeck = assertPersistableGeneratedDeck({ cards: rawCards, passages });
+  const cards = validatedDeck.cards;
 
   const timestamp = nowIso();
   const requestedDocumentId =
@@ -683,18 +698,25 @@ async function saveGeneratedDeck(store, input) {
     timestamp,
   }));
   const chunkByCitation = new Map(chunkRows.map((chunk) => [chunk.citation, chunk]));
+  const chunkById = new Map(chunkRows.map((chunk) => [chunk.id, chunk]));
   const cardRows = cards.map((card, index) => {
     const kind = ["glance", "recall", "application", "pitfall"].includes(card.kind)
       ? card.kind
       : "glance";
     const citation = String(card.citation || "");
-    const chunk = chunkByCitation.get(citation) || null;
+    const requestedChunkId = String(card.chunkId || card.sourceReference?.chunkId || "").trim();
+    const chunk = (requestedChunkId ? chunkById.get(requestedChunkId) : null) ||
+      chunkByCitation.get(citation) ||
+      null;
+    if (!chunk) {
+      throw new Error(`Generated card ${index + 1} does not point to a persisted source chunk.`);
+    }
 
     return {
       id: createPublicId("card"),
       sessionId,
       documentId,
-      chunkId: chunk?.id || null,
+      chunkId: chunk.id,
       sequence: index,
       kind,
       status: "active",
@@ -704,6 +726,14 @@ async function saveGeneratedDeck(store, input) {
       answer: typeof card.answer === "string" ? card.answer : "",
       excerpt: requireNonEmpty(card.excerpt, `cards[${index}].excerpt`),
       citation: requireNonEmpty(citation, `cards[${index}].citation`),
+      sourceReference: {
+        ...(card.sourceReference || {}),
+        chunkId: chunk.id,
+        citation: chunk.citation,
+        pageNumber: chunk.pageNumber,
+        paragraphStart: chunk.paragraphStart,
+        paragraphEnd: chunk.paragraphEnd,
+      },
       createdAt: timestamp,
       updatedAt: timestamp,
     };
@@ -758,7 +788,9 @@ async function saveGeneratedDeck(store, input) {
       status: "ready",
       generationMode: requireNonEmpty(input.generationMode, "generationMode"),
       model: requireNonEmpty(input.model, "model"),
-      focusTags: Array.isArray(input.focusTags) ? input.focusTags.map(String) : [],
+      focusTags: Array.isArray(input.focusTags) && input.focusTags.length
+        ? input.focusTags.map(String)
+        : validatedDeck.focusTags,
       stats: input.stats && typeof input.stats === "object" ? input.stats : {},
       createdAt: timestamp,
       updatedAt: timestamp,
@@ -913,6 +945,7 @@ function buildDeckResponse({ document, session, cards }) {
       excerpt: card.excerpt,
       citation: card.citation,
       chunkId: card.chunkId || undefined,
+      sourceReference: card.sourceReference || undefined,
       status: card.status,
     })),
     generationMode: session.generationMode,
