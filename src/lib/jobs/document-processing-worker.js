@@ -2,6 +2,7 @@ import { getDefaultStudyRepository } from "../data/repositories.js";
 import { runDocumentPipeline } from "../study/pipeline.js";
 
 const SCHEDULED_JOBS = new Set();
+const SCHEDULED_JOB_PROMISES = new Map();
 
 export function scheduleDocumentProcessingJob({
   jobId,
@@ -14,15 +15,30 @@ export function scheduleDocumentProcessingJob({
   }
 
   SCHEDULED_JOBS.add(jobId);
-  const timer = setTimeout(async () => {
-    SCHEDULED_JOBS.delete(jobId);
-    await processDocumentProcessingJob({ jobId, repository, env });
-  }, delayMs);
+  let timer;
+  const scheduledJob = new Promise((resolve) => {
+    timer = setTimeout(async () => {
+      try {
+        await processDocumentProcessingJob({ jobId, repository, env });
+      } finally {
+        SCHEDULED_JOBS.delete(jobId);
+        SCHEDULED_JOB_PROMISES.delete(jobId);
+        resolve();
+      }
+    }, delayMs);
+  });
+  SCHEDULED_JOB_PROMISES.set(jobId, scheduledJob);
   if (typeof timer.unref === "function") {
     timer.unref();
   }
 
   return true;
+}
+
+export async function waitForScheduledDocumentJobs() {
+  while (SCHEDULED_JOB_PROMISES.size) {
+    await Promise.all([...SCHEDULED_JOB_PROMISES.values()]);
+  }
 }
 
 export async function processDocumentProcessingJob({
