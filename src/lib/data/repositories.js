@@ -840,7 +840,7 @@ async function getLatestDeckForUser(store, userId) {
   const current = await store.read();
   const session = current.studySessions
     .filter((entry) => entry.userId === ownerId && entry.status === "ready")
-    .sort((left, right) => String(right.createdAt).localeCompare(String(left.createdAt)))[0];
+    .sort((left, right) => compareRecentRows(left, right))[0];
 
   if (!session) {
     return null;
@@ -850,19 +850,20 @@ async function getLatestDeckForUser(store, userId) {
   const cards = current.studyCards
     .filter((entry) => entry.sessionId === session.id)
     .sort((left, right) => left.sequence - right.sequence);
+  const interactions = current.studyInteractions
+    .filter((entry) => entry.sessionId === session.id && entry.userId === ownerId)
+    .sort((left, right) => String(left.createdAt).localeCompare(String(right.createdAt)));
 
-  return buildDeckResponse({ document, session, cards });
+  return buildDeckResponse({ document, session, cards, interactions });
 }
 
 async function getLatestWorkspaceForUser(store, userId) {
   const ownerId = requireNonEmpty(userId, "userId");
   const current = await store.read();
-  const document = current.documents
-    .filter((entry) => entry.userId === ownerId)
-    .sort((left, right) => String(right.updatedAt).localeCompare(String(left.updatedAt)))[0];
+  const { document, lastActiveAt } = selectLastActiveDocument(current, ownerId);
 
   if (!document) {
-    return { document: null, job: null, deck: null };
+    return { document: null, job: null, deck: null, resume: buildResumeResponse({}) };
   }
 
   const job = current.documentJobs
@@ -870,17 +871,32 @@ async function getLatestWorkspaceForUser(store, userId) {
     .sort((left, right) => String(right.createdAt).localeCompare(String(left.createdAt)))[0] || null;
   const session = current.studySessions
     .filter((entry) => entry.documentId === document.id && entry.userId === ownerId)
-    .sort((left, right) => String(right.createdAt).localeCompare(String(left.createdAt)))[0] || null;
+    .sort((left, right) => compareRecentRows(left, right))[0] || null;
   const cards = session?.status === "ready"
     ? current.studyCards
       .filter((entry) => entry.sessionId === session.id)
       .sort((left, right) => left.sequence - right.sequence)
     : [];
+  const interactions = session
+    ? current.studyInteractions
+      .filter((entry) => entry.sessionId === session.id && entry.userId === ownerId)
+      .sort((left, right) => String(left.createdAt).localeCompare(String(right.createdAt)))
+    : [];
+  const deck = session?.status === "ready"
+    ? buildDeckResponse({ document, session, cards, interactions })
+    : null;
 
   return {
     document: buildDocumentResponse(document),
     job: buildJobResponse(job),
-    deck: session?.status === "ready" ? buildDeckResponse({ document, session, cards }) : null,
+    deck,
+    resume: buildResumeResponse({
+      document,
+      job,
+      session,
+      deck,
+      lastActiveAt,
+    }),
   };
 }
 
@@ -920,6 +936,14 @@ async function recordInteraction(store, input) {
     return {
       ...current,
       studyCards: updateCardStatus(current.studyCards, interaction),
+      studySessions: current.studySessions.map((entry) =>
+        entry.id === session.id
+          ? { ...entry, updatedAt: timestamp }
+          : entry),
+      documents: current.documents.map((entry) =>
+        entry.id === session.documentId && entry.userId === userId
+          ? { ...entry, updatedAt: timestamp }
+          : entry),
       studyInteractions: [...current.studyInteractions, interaction],
     };
   });
@@ -927,7 +951,7 @@ async function recordInteraction(store, input) {
   return interaction;
 }
 
-function buildDeckResponse({ document, session, cards }) {
+function buildDeckResponse({ document, session, cards, interactions = [] }) {
   return {
     documentId: document?.id || "",
     sessionId: session.id,
@@ -948,15 +972,19 @@ function buildDeckResponse({ document, session, cards }) {
       sourceReference: card.sourceReference || undefined,
       status: card.status,
     })),
+    feedback: buildFeedbackResponse({ cards, interactions }),
     generationMode: session.generationMode,
     model: session.model,
     stats: {
       ...(session.stats || {}),
       cardCount: cards.length,
     },
+    readyAt: session.readyAt || session.createdAt,
+    lastActiveAt: session.updatedAt || session.readyAt || session.createdAt,
     persistence: {
       adapter: "local-json",
       serverStored: true,
+      resumeSource: "server",
     },
   };
 }
@@ -978,6 +1006,48 @@ function buildDocumentResponse(document) {
     updatedAt: document.updatedAt,
     failedAt: document.failedAt,
     failureReason: document.failureReason || "",
+    statusGroup: groupDocumentStatus(document.status),
+  };
+}
+
+function buildResumeResponse({ document = null, job = null, session = null, deck = null, lastActiveAt = "" }) {
+  if (!document) {
+    return {
+      available: false,
+      status: "empty",
+      label: "No resumable document",
+      detail: "Add a source to create the first server-backed study session.",
+    };
+  }
+
+  const statusGroup = deck ? "ready" : groupDocumentStatus(document.status);
+  const labels = {
+    ready: "Resume ready feed",
+    processing: "Resume processing document",
+    failed: "Review failed document",
+    empty: "No resumable document",
+  };
+  const details = {
+    ready: "Cards and study actions were loaded from the backend.",
+    processing: "The worker state is still active; this view will refresh while it runs.",
+    failed: document.failureReason || job?.lastError || "Processing stopped before cards were ready.",
+    empty: "Add a source to create the first server-backed study session.",
+  };
+
+  return {
+    available: true,
+    status: statusGroup,
+    label: labels[statusGroup] || labels.processing,
+    detail: details[statusGroup] || details.processing,
+    documentId: document.id,
+    documentTitle: document.title,
+    sessionId: session?.id || "",
+    lastActiveAt:
+      lastActiveAt ||
+      session?.updatedAt ||
+      session?.readyAt ||
+      session?.createdAt ||
+      document.updatedAt,
   };
 }
 
@@ -1002,6 +1072,109 @@ function buildJobResponse(job) {
     lastErrorCode: job.lastErrorCode || "",
     resultStatus: job.resultStatus || "",
   };
+}
+
+function buildFeedbackResponse({ cards, interactions }) {
+  const feedback = Object.fromEntries(
+    cards.map((card) => [
+      card.id,
+      {
+        confidence: null,
+        saved: card.status === "saved",
+        revealed: false,
+      },
+    ]),
+  );
+
+  for (const interaction of interactions) {
+    if (!interaction.cardId || !feedback[interaction.cardId]) {
+      continue;
+    }
+
+    if (interaction.interactionType === "save_card") {
+      feedback[interaction.cardId].saved = true;
+    } else if (interaction.interactionType === "unsave_card") {
+      feedback[interaction.cardId].saved = false;
+    } else if (interaction.interactionType === "reveal_answer") {
+      feedback[interaction.cardId].revealed = interaction.value !== "false";
+    } else if (interaction.interactionType === "set_confidence") {
+      feedback[interaction.cardId].confidence = interaction.value || null;
+    }
+  }
+
+  return feedback;
+}
+
+function selectLastActiveDocument(current, ownerId) {
+  const sessionsByDocumentId = new Map();
+  for (const session of current.studySessions.filter((entry) => entry.userId === ownerId)) {
+    const currentSession = sessionsByDocumentId.get(session.documentId);
+    if (!currentSession || compareRecentRows(session, currentSession) < 0) {
+      sessionsByDocumentId.set(session.documentId, session);
+    }
+  }
+
+  const interactionTimesBySessionId = new Map();
+  for (const interaction of current.studyInteractions.filter((entry) => entry.userId === ownerId)) {
+    const previous = interactionTimesBySessionId.get(interaction.sessionId) || "";
+    if (String(interaction.createdAt).localeCompare(previous) > 0) {
+      interactionTimesBySessionId.set(interaction.sessionId, interaction.createdAt);
+    }
+  }
+
+  const ranked = current.documents
+    .filter((entry) => entry.userId === ownerId)
+    .map((document) => {
+      const session = sessionsByDocumentId.get(document.id);
+      const interactionAt = session ? interactionTimesBySessionId.get(session.id) : "";
+      const lastActiveAt = maxIso([
+        document.updatedAt,
+        document.createdAt,
+        session?.updatedAt,
+        session?.readyAt,
+        session?.createdAt,
+        interactionAt,
+      ]);
+      return { document, lastActiveAt };
+    })
+    .sort((left, right) => {
+      const activeComparison = String(right.lastActiveAt).localeCompare(String(left.lastActiveAt));
+      if (activeComparison !== 0) {
+        return activeComparison;
+      }
+      return String(right.document.createdAt).localeCompare(String(left.document.createdAt));
+    });
+
+  return ranked[0] || { document: null, lastActiveAt: "" };
+}
+
+function compareRecentRows(left, right) {
+  const updatedComparison = String(right.updatedAt || right.createdAt)
+    .localeCompare(String(left.updatedAt || left.createdAt));
+  if (updatedComparison !== 0) {
+    return updatedComparison;
+  }
+  return String(right.createdAt).localeCompare(String(left.createdAt));
+}
+
+function maxIso(values) {
+  return values
+    .filter(Boolean)
+    .map(String)
+    .sort((left, right) => right.localeCompare(left))[0] || "";
+}
+
+function groupDocumentStatus(status) {
+  if (status === "cards_generated") {
+    return "ready";
+  }
+  if (status === "failed" || status === "parse_failed" || status === "ocr_needed") {
+    return "failed";
+  }
+  if (!status) {
+    return "empty";
+  }
+  return "processing";
 }
 
 function updateCardStatus(cards, interaction) {
