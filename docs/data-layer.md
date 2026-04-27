@@ -81,8 +81,9 @@ dead-letter state separately from the document row.
 ### study_sessions
 
 Represents one generated feed for one document and one goal. Sessions are owned
-by a user, carry the selected generation mode and model, and track readiness for
-the feed UI.
+by a user, carry the selected generation mode and model, track readiness for the
+feed UI, and use `updated_at` as the server-side last-active marker for resume
+lookup.
 
 ### study_cards
 
@@ -95,6 +96,10 @@ excerpt.
 Append-only interaction log for reveal, confidence, save, and dismiss events.
 This keeps learning actions out of browser-only storage and leaves room for
 later progress analytics.
+
+During resume, the repository folds the latest interaction events into
+`deck.feedback` so saved state, answer reveals, and confidence choices survive a
+page refresh or later visit.
 
 ## Status Transitions
 
@@ -172,6 +177,12 @@ Migration `0005_chunk_retrieval_metadata.sql` adds:
 - retrieval rank, score, and reason fields for selected generation chunks
 - indexes for page/paragraph and retrieval-ranked chunk lookups
 
+Migration `0006_session_resume_state.sql` adds:
+
+- owner-scoped session recency indexes for last-active resume lookup
+- document-scoped session recency indexes for ready feed restore
+- interaction indexes for rebuilding per-card feedback
+
 Rollout order:
 
 1. Create owner table and document tables.
@@ -184,6 +195,7 @@ Rollout order:
 8. Add parse outputs before background OCR and retrieval workers.
 9. Add background job rows before async worker orchestration ships.
 10. Add chunk retrieval metadata before grounded generation hardening.
+11. Add resume-state indexes before comeback-later feed loading ships.
 
 Rollback expectation: Day 03 migrations are reversible before production data is
 loaded. After real user data exists, rollback should be a forward migration that
@@ -210,6 +222,10 @@ Repository responsibilities:
 - Store documents, chunks, sessions, cards, and interactions.
 - Store extracted page text and parser diagnostics before generation.
 - Store background job payloads, attempts, and dead-letter state.
+- Select the last active document from document, session, and interaction
+  recency instead of browser-local feed memory.
+- Rebuild ready decks and per-card feedback from persisted cards and
+  interactions.
 - Return only rows owned by the authenticated user.
 - Keep local JSON storage and future Postgres storage behind the same service
   boundary.
