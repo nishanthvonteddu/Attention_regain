@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
 
-export const DATA_MODEL_VERSION = 4;
+export const DATA_MODEL_VERSION = 5;
 
 export const SOURCE_KINDS = Object.freeze(["paste", "file", "pdf"]);
 export const DOCUMENT_STATUSES = Object.freeze([
@@ -123,6 +123,10 @@ export function createEmptyJsonStore() {
       },
       {
         id: "0006_session_resume_state",
+        appliedAt: nowIso(),
+      },
+      {
+        id: "0007_learning_loop_progress",
         appliedAt: nowIso(),
       },
     ],
