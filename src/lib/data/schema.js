@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
 
-export const DATA_MODEL_VERSION = 3;
+export const DATA_MODEL_VERSION = 4;
 
 export const SOURCE_KINDS = Object.freeze(["paste", "file", "pdf"]);
 export const DOCUMENT_STATUSES = Object.freeze([
@@ -119,6 +119,10 @@ export function createEmptyJsonStore() {
       },
       {
         id: "0005_chunk_retrieval_metadata",
+        appliedAt: nowIso(),
+      },
+      {
+        id: "0006_session_resume_state",
         appliedAt: nowIso(),
       },
     ],

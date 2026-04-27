@@ -13,7 +13,7 @@ import { useAuthShell } from "./auth-shell-provider.js";
 import { PREVIEW_DECK, SAMPLE_SOURCE } from "../lib/study-preview.js";
 import { MAX_UPLOAD_BYTES, validateUploadDescriptor } from "../lib/uploads/validation.js";
 
-const STORAGE_KEY_PREFIX = "attention-regain-session-v3";
+const STORAGE_KEY_PREFIX = "attention-regain-draft-v4";
 
 const EMPTY_FEEDBACK = {
   confidence: null,
@@ -61,7 +61,7 @@ export function StudyWorkspace() {
     "The private workspace is ready. Upload a paper or paste notes to turn this session into a grounded study feed.",
   );
   const [isSubmitting, setIsSubmitting] = useState(false);
-  const [hasLoadedStorage, setHasLoadedStorage] = useState(false);
+  const [hasLoadedDraft, setHasLoadedDraft] = useState(false);
   const [isPending, startTransition] = useTransition();
 
   const deferredDeck = useDeferredValue(deck);
@@ -83,16 +83,10 @@ export function StudyWorkspace() {
       setSourceText(parsed.sourceText || "");
       setFileName(parsed.fileName || "");
       setUploadStatus(parsed.uploadStatus || null);
-      setWorkspaceState(parsed.workspaceState || null);
-      setDeck(parsed.deck || null);
-      setFeedback(parsed.feedback || {});
-      if (parsed.deck) {
-        setStatusMessage("Private study session restored from this browser.");
-      }
     } catch {
       window.localStorage.removeItem(storageKey);
     } finally {
-      setHasLoadedStorage(true);
+      setHasLoadedDraft(true);
     }
   }, [storageKey]);
 
@@ -114,7 +108,7 @@ export function StudyWorkspace() {
           setDeck(payload.deck || null);
           setWorkspaceState(payload);
           if (payload.deck) {
-            setFeedback({});
+            setFeedback(payload.deck.feedback || {});
           }
         });
         setTitle(payload.deck?.documentTitle || payload.document?.title || "");
@@ -131,7 +125,7 @@ export function StudyWorkspace() {
     };
   }, []);
 
-  const persistSession = useEffectEvent((nextDeck, nextFeedback) => {
+  const persistDraft = useEffectEvent(() => {
     window.localStorage.setItem(
       storageKey,
       JSON.stringify({
@@ -140,30 +134,24 @@ export function StudyWorkspace() {
         sourceText,
         fileName,
         uploadStatus,
-        workspaceState,
-        deck: nextDeck,
-        feedback: nextFeedback,
       }),
     );
   });
 
   useEffect(() => {
-    if (!hasLoadedStorage) {
+    if (!hasLoadedDraft) {
       return;
     }
-    persistSession(deck, feedback);
+    persistDraft();
   }, [
-    deck,
-    feedback,
     fileName,
     goal,
-    hasLoadedStorage,
-    persistSession,
+    hasLoadedDraft,
+    persistDraft,
     sourceText,
     storageKey,
     title,
     uploadStatus,
-    workspaceState,
   ]);
 
   const syncWorkspace = useEffectEvent(async () => {
@@ -178,7 +166,7 @@ export function StudyWorkspace() {
         setWorkspaceState(payload);
         setDeck(payload.deck || null);
         if (payload.deck) {
-          setFeedback({});
+          setFeedback(payload.deck.feedback || {});
         }
       });
       setStatusMessage(describeWorkspaceStatus(payload));
@@ -254,7 +242,7 @@ export function StudyWorkspace() {
         setWorkspaceState(payload);
         setDeck(payload.deck || null);
         if (payload.deck) {
-          setFeedback({});
+          setFeedback(payload.deck.feedback || {});
         }
       });
       setUploadStatus(buildProcessingBadge(payload));
@@ -296,6 +284,9 @@ export function StudyWorkspace() {
       startTransition(() => {
         setWorkspaceState(payload);
         setDeck(payload.deck || null);
+        if (payload.deck) {
+          setFeedback(payload.deck.feedback || {});
+        }
       });
       setUploadStatus(buildProcessingBadge(payload));
       setStatusMessage(describeWorkspaceStatus(payload));
@@ -507,6 +498,7 @@ export function StudyWorkspace() {
 
   const busy = isSubmitting || isPending;
   const visibleUploadStatus = buildProcessingBadge(workspaceState) || uploadStatus;
+  const workspaceView = resolveWorkspaceView(workspaceState, Boolean(visibleDeck && !isPreview));
 
   return (
     <main className="shell">
@@ -542,6 +534,18 @@ export function StudyWorkspace() {
             <p className="eyebrow">Session status</p>
             <p>{statusMessage}</p>
             {error ? <div className="error">{error}</div> : null}
+            {workspaceState?.resume?.available ? (
+              <div className={`resume-notice ${workspaceView.kind}`}>
+                <strong>{workspaceState.resume.label}</strong>
+                <span>
+                  {workspaceState.resume.documentTitle}
+                  {workspaceState.resume.lastActiveAt
+                    ? ` | ${formatResumeTime(workspaceState.resume.lastActiveAt)}`
+                    : ""}
+                </span>
+                <p>{workspaceState.resume.detail}</p>
+              </div>
+            ) : null}
             <p className="field-label" style={{ marginTop: 18 }}>
               Auth boundary
             </p>
@@ -707,6 +711,7 @@ export function StudyWorkspace() {
                   <Metric label="Saved" value={sessionStats.saved} />
                   <Metric label="Revealed" value={sessionStats.revealed} />
                 </div>
+                {!isPreview ? <DocumentStatusStrip workspaceState={workspaceState} /> : null}
               </header>
 
               <div className="feed-body">
@@ -788,48 +793,12 @@ export function StudyWorkspace() {
               </div>
             </>
           ) : (
-            <div className="feed-body">
-              <div className="feed-column">
-                <article className="feed-card">
-                  <div className="feed-card-head">
-                    <div>
-                      <span className="tone" style={TONE.application.style}>
-                        Background worker
-                      </span>
-                      <h3>{workspaceState?.document?.title || "Waiting for a study source"}</h3>
-                    </div>
-                  </div>
-                  <p>{describeWorkspaceStatus(workspaceState)}</p>
-                  <div className="card-prompt">
-                    <strong>Current document status</strong>
-                    <p>
-                      {workspaceState?.document?.status
-                        ? formatDocumentStatus(workspaceState.document.status)
-                        : "No server-backed document is active yet."}
-                    </p>
-                    {workspaceState?.job ? (
-                      <p>
-                        Attempt {workspaceState.job.attemptCount} of {workspaceState.job.maxAttempts}.
-                      </p>
-                    ) : null}
-                    {workspaceState?.document?.failureReason ? (
-                      <p>{workspaceState.document.failureReason}</p>
-                    ) : null}
-                    {isRecoverableWorkspace(workspaceState) ? (
-                      <button
-                        className="primary-button"
-                        disabled={busy}
-                        onClick={handleRetryProcessing}
-                        style={{ marginTop: 14 }}
-                        type="button"
-                      >
-                        {busy ? "Retrying..." : "Retry generation"}
-                      </button>
-                    ) : null}
-                  </div>
-                </article>
-              </div>
-            </div>
+            <DocumentStatePanel
+              busy={busy}
+              onRetry={handleRetryProcessing}
+              workspaceState={workspaceState}
+              workspaceView={workspaceView}
+            />
           )}
         </div>
       </section>
@@ -842,6 +811,64 @@ function Metric({ label, value }) {
     <div className="metric">
       <label>{label}</label>
       <strong>{value}</strong>
+    </div>
+  );
+}
+
+function DocumentStatusStrip({ workspaceState }) {
+  const view = resolveWorkspaceView(workspaceState, Boolean(workspaceState?.deck));
+
+  return (
+    <div className={`document-strip ${view.kind}`}>
+      <div>
+        <strong>{view.label}</strong>
+        <span>{view.detail}</span>
+      </div>
+      <em>{formatDocumentStatus(workspaceState?.document?.status || "cards_generated")}</em>
+    </div>
+  );
+}
+
+function DocumentStatePanel({ busy, onRetry, workspaceState, workspaceView }) {
+  const document = workspaceState?.document;
+  const job = workspaceState?.job;
+
+  return (
+    <div className="feed-body">
+      <div className="feed-column">
+        <article className={`state-panel ${workspaceView.kind}`}>
+          <div className="state-panel-head">
+            <span className="tone" style={workspaceView.tone}>
+              {workspaceView.badge}
+            </span>
+            <h3>{document?.title || "Waiting for a study source"}</h3>
+            <p>{workspaceView.detail}</p>
+          </div>
+
+          <div className="state-grid">
+            <Metric label="Document" value={formatDocumentStatus(document?.status || "None")} />
+            <Metric label="Worker" value={formatDocumentStatus(job?.status || "Idle")} />
+            <Metric label="Attempts" value={job ? `${job.attemptCount}/${job.maxAttempts}` : "0/0"} />
+          </div>
+
+          <div className="state-copy">
+            <strong>{workspaceView.label}</strong>
+            <p>{describeWorkspaceStatus(workspaceState)}</p>
+            {document?.failureReason ? <p>{document.failureReason}</p> : null}
+            {job?.lastError ? <p>{job.lastError}</p> : null}
+            {isRecoverableWorkspace(workspaceState) ? (
+              <button
+                className="primary-button"
+                disabled={busy}
+                onClick={onRetry}
+                type="button"
+              >
+                {busy ? "Retrying..." : "Retry generation"}
+              </button>
+            ) : null}
+          </div>
+        </article>
+      </div>
     </div>
   );
 }
@@ -903,6 +930,61 @@ function describeWorkspaceStatus(workspaceState) {
   }
 
   return "The private study workspace is ready.";
+}
+
+function resolveWorkspaceView(workspaceState, hasReadyDeck = false) {
+  const status = workspaceState?.document?.status;
+  if (hasReadyDeck || workspaceState?.deck || status === "cards_generated") {
+    return {
+      kind: "ready",
+      badge: "Ready",
+      label: "Server-backed feed ready",
+      detail: "Cards, citations, and study actions are loaded from persisted state.",
+      tone: TONE.recall.style,
+    };
+  }
+
+  if (status === "failed" || status === "parse_failed" || status === "ocr_needed") {
+    return {
+      kind: "failed",
+      badge: "Needs action",
+      label: "Processing stopped",
+      detail: "The document is saved, but cards are not ready. Retry when the source or parser path is available.",
+      tone: TONE.pitfall.style,
+    };
+  }
+
+  if (status) {
+    return {
+      kind: "processing",
+      badge: "Processing",
+      label: "Document is not ready yet",
+      detail: "The background worker owns parsing, retrieval prep, and grounded card generation.",
+      tone: TONE.application.style,
+    };
+  }
+
+  return {
+    kind: "empty",
+    badge: "No document",
+    label: "No active document",
+    detail: "Add a source to create a resumable server-backed feed.",
+    tone: TONE.glance.style,
+  };
+}
+
+function formatResumeTime(value) {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return "recent activity";
+  }
+
+  return new Intl.DateTimeFormat(undefined, {
+    month: "short",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+  }).format(date);
 }
 
 function formatDocumentStatus(status) {

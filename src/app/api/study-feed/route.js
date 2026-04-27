@@ -197,7 +197,12 @@ export async function PATCH(request) {
       sessionId: String(payload.sessionId || ""),
       cardId: String(payload.cardId || ""),
       interactionType: String(payload.interactionType || ""),
-      value: typeof payload.value === "string" ? payload.value : JSON.stringify(payload.value ?? ""),
+      value:
+        payload.value == null
+          ? ""
+          : typeof payload.value === "string"
+            ? payload.value
+            : JSON.stringify(payload.value),
     });
 
     return Response.json({ interaction });
