@@ -614,6 +614,60 @@ textarea:focus-visible {
   background: rgba(41, 88, 70, 0.16);
 }
 
+.learning-progress {
+  display: grid;
+  gap: 12px;
+  margin-top: 16px;
+  padding: 14px 16px;
+  border-radius: 22px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(255, 255, 255, 0.05);
+}
+
+.learning-progress.review_needed {
+  border-color: rgba(239, 176, 143, 0.24);
+  background: rgba(217, 108, 63, 0.12);
+}
+
+.learning-progress.complete {
+  border-color: rgba(41, 88, 70, 0.28);
+  background: rgba(41, 88, 70, 0.18);
+}
+
+.learning-progress strong,
+.learning-progress span {
+  display: block;
+}
+
+.learning-progress strong {
+  color: #f8f0e4;
+  font-size: 0.82rem;
+  text-transform: uppercase;
+  letter-spacing: 0.18em;
+}
+
+.learning-progress span {
+  margin-top: 7px;
+  color: #d1c2b2;
+  font-size: 0.9rem;
+  line-height: 1.5;
+}
+
+.progress-track {
+  overflow: hidden;
+  height: 8px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.09);
+}
+
+.progress-track span {
+  display: block;
+  min-width: 8px;
+  height: 100%;
+  border-radius: inherit;
+  background: #efb08f;
+}
+
 .document-strip.failed {
   border-color: rgba(217, 108, 63, 0.24);
   background: rgba(217, 108, 63, 0.12);
@@ -670,6 +724,14 @@ textarea:focus-visible {
   padding: 22px;
   color: #1a1612;
   box-shadow: 0 18px 45px rgba(13, 11, 9, 0.14);
+}
+
+.feed-card.review {
+  border-color: rgba(145, 93, 10, 0.22);
+}
+
+.feed-card.locked {
+  border-color: rgba(41, 88, 70, 0.22);
 }
 
 .state-panel {
@@ -782,6 +844,54 @@ textarea:focus-visible {
   font-size: 0.97rem;
 }
 
+.learning-state-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  margin-top: 14px;
+}
+
+.learning-state-row span {
+  display: inline-flex;
+  align-items: center;
+  min-height: 28px;
+  padding: 7px 10px;
+  border-radius: 999px;
+  border: 1px solid rgba(23, 18, 15, 0.08);
+  background: rgba(255, 255, 255, 0.46);
+  color: #6c6257;
+  text-transform: uppercase;
+  letter-spacing: 0.18em;
+  font-size: 0.66rem;
+  font-weight: 700;
+}
+
+.learning-state {
+  color: #f8f0e4 !important;
+}
+
+.learning-state.review {
+  border-color: var(--warning);
+  background: var(--warning);
+}
+
+.learning-state.locked {
+  border-color: var(--success);
+  background: var(--success);
+}
+
+.learning-state.saved {
+  border-color: var(--bg-deep);
+  background: var(--bg-deep);
+}
+
+.learning-state.seen,
+.learning-state.new {
+  color: #4f453c !important;
+  background: #efe7da;
+}
+
 .card-prompt {
   margin-top: 18px;
   padding: 18px;
@@ -857,6 +967,12 @@ textarea:focus-visible {
   font-size: 0.68rem;
   font-weight: 700;
   color: #7b6d60;
+}
+
+.learning-hint {
+  color: #6d5f52;
+  font-size: 0.78rem;
+  line-height: 1.4;
 }
 
 .entry-shell {
@@ -969,11 +1085,13 @@ textarea:focus-visible {
   }
 
   .document-strip,
+  .learning-progress,
   .state-grid {
     grid-template-columns: 1fr;
   }
 
-  .document-strip {
+  .document-strip,
+  .learning-progress {
     align-items: flex-start;
     flex-direction: column;
   }
