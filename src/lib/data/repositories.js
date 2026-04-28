@@ -7,6 +7,7 @@ import {
   nowIso,
 } from "./schema.js";
 import { createLocalJsonStore } from "./local-store.js";
+import { buildRecoveryContract } from "../documents/ocr-routing.js";
 import { assertPersistableGeneratedDeck } from "../study/card-contract.js";
 
 export function createStudyRepository({ store = createLocalJsonStore() } = {}) {
@@ -52,6 +53,9 @@ export function createStudyRepository({ store = createLocalJsonStore() } = {}) {
     },
     getLatestDocumentProcessingJobForUser(userId, documentId) {
       return getLatestDocumentProcessingJobForUser(store, userId, documentId);
+    },
+    getDocumentRecoveryForUser(userId, documentId) {
+      return getDocumentRecoveryForUser(store, userId, documentId);
     },
     saveGeneratedDeck(input) {
       return saveGeneratedDeck(store, input);
@@ -670,6 +674,40 @@ async function getLatestDocumentProcessingJobForUser(store, userId, documentId) 
     .sort((left, right) => String(right.createdAt).localeCompare(String(left.createdAt)))[0] || null;
 }
 
+async function getDocumentRecoveryForUser(store, userId, documentId) {
+  const ownerId = requireNonEmpty(userId, "userId");
+  const targetDocumentId = requireNonEmpty(documentId, "documentId");
+  const current = await store.read();
+  const document = current.documents.find(
+    (entry) => entry.id === targetDocumentId && entry.userId === ownerId,
+  );
+  if (!document) {
+    return null;
+  }
+
+  const jobs = current.documentJobs.filter(
+    (entry) => entry.documentId === targetDocumentId && entry.userId === ownerId,
+  );
+  const latestJob = [...jobs]
+    .sort((left, right) => String(right.createdAt).localeCompare(String(left.createdAt)))[0] ||
+    null;
+  const diagnostics = current.documentParseDiagnostics.filter(
+    (entry) => entry.documentId === targetDocumentId,
+  );
+  const recovery = buildRecoveryContract({
+    document,
+    job: latestJob,
+    diagnostics,
+    processingJobCount: jobs.length,
+  });
+
+  return {
+    document,
+    job: latestJob,
+    recovery,
+  };
+}
+
 async function saveGeneratedDeck(store, input) {
   const userId = requireNonEmpty(input.user?.id, "user.id");
   const title = requireNonEmpty(input.documentTitle, "documentTitle");
@@ -869,6 +907,18 @@ async function getLatestWorkspaceForUser(store, userId) {
   const job = current.documentJobs
     .filter((entry) => entry.documentId === document.id && entry.userId === ownerId)
     .sort((left, right) => String(right.createdAt).localeCompare(String(left.createdAt)))[0] || null;
+  const jobs = current.documentJobs.filter(
+    (entry) => entry.documentId === document.id && entry.userId === ownerId,
+  );
+  const diagnostics = current.documentParseDiagnostics.filter(
+    (entry) => entry.documentId === document.id,
+  );
+  const recovery = buildRecoveryContract({
+    document,
+    job,
+    diagnostics,
+    processingJobCount: jobs.length,
+  });
   const session = current.studySessions
     .filter((entry) => entry.documentId === document.id && entry.userId === ownerId)
     .sort((left, right) => compareRecentRows(left, right))[0] || null;
@@ -887,9 +937,10 @@ async function getLatestWorkspaceForUser(store, userId) {
     : null;
 
   return {
-    document: buildDocumentResponse(document),
+    document: buildDocumentResponse(document, recovery),
     job: buildJobResponse(job),
     deck,
+    recovery,
     resume: buildResumeResponse({
       document,
       job,
@@ -1015,7 +1066,7 @@ function buildDeckResponse({ document, session, cards, interactions = [] }) {
   };
 }
 
-function buildDocumentResponse(document) {
+function buildDocumentResponse(document, recovery = null) {
   if (!document) {
     return null;
   }
@@ -1033,6 +1084,7 @@ function buildDocumentResponse(document) {
     failedAt: document.failedAt,
     failureReason: document.failureReason || "",
     statusGroup: groupDocumentStatus(document.status),
+    recovery,
   };
 }
 
