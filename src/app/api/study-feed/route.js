@@ -10,6 +10,7 @@ import {
   DOCUMENT_PROCESSING_MAX_ATTEMPTS,
   DOCUMENT_PROCESSING_QUEUE,
 } from "../../../lib/jobs/document-processing.js";
+import { canRetryRecovery } from "../../../lib/documents/ocr-routing.js";
 import { scheduleDocumentProcessingJob } from "../../../lib/jobs/document-processing-worker.js";
 
 export const runtime = "nodejs";
@@ -39,6 +40,16 @@ export async function POST(request) {
     const retryDocumentId = String(formData.get("retryDocumentId") || "").trim();
 
     if (retryDocumentId) {
+      const recoveryState = await repository.getDocumentRecoveryForUser(
+        session.user.id,
+        retryDocumentId,
+      );
+      if (!recoveryState) {
+        return Response.json(
+          { error: "No recoverable document was found for this user." },
+          { status: 404 },
+        );
+      }
       const retryJob = await repository.getLatestDocumentProcessingJobForUser(
         session.user.id,
         retryDocumentId,
@@ -56,6 +67,17 @@ export async function POST(request) {
       if (retryJobIsActive) {
         return Response.json(
           { error: "This document already has active processing in progress." },
+          { status: 409 },
+        );
+      }
+      if (!canRetryRecovery(recoveryState.recovery)) {
+        return Response.json(
+          {
+            error:
+              recoveryState.recovery?.blockedReason ||
+              "This document is not in a recoverable processing state.",
+            recovery: recoveryState.recovery,
+          },
           { status: 409 },
         );
       }

@@ -4,6 +4,7 @@ import {
   normalizeExtractedText,
   PDF_PARSE_STATUSES,
 } from "../documents/pdf-parser.js";
+import { buildOcrRoutingDecision } from "../documents/ocr-routing.js";
 import { DOCUMENT_JOB_SOURCE_TYPES } from "../jobs/document-processing.js";
 import {
   buildDocumentChunks,
@@ -82,11 +83,16 @@ export async function runDocumentPipeline({
 }) {
   const extraction = await extractQueuedSource({ source, title });
   if (!extraction.ok) {
+    const routing = buildOcrRoutingDecision({
+      status: extraction.status,
+      code: extraction.code,
+      diagnostics: extraction.diagnostics,
+    });
     await repository.markDocumentParseFailed({
       userId: user.id,
       documentId,
       status: extraction.status,
-      failureReason: extraction.error,
+      failureReason: routing.userMessage || extraction.error,
       diagnostics: extraction.diagnostics,
     });
 
@@ -94,6 +100,7 @@ export async function runDocumentPipeline({
       outcome: "terminal",
       documentStatus: extraction.status,
       parse: buildParseResponse(extraction),
+      recovery: routing,
     };
   }
 

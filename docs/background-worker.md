@@ -42,6 +42,12 @@ The worker is the only layer that owns long-running parse and generation work.
 API routes may enqueue and nudge jobs, but they do not parse PDFs or build cards
 inside the request path anymore.
 
+Day 11 separates terminal parse recovery from worker crashes. `ocr_needed` and
+`parse_failed` complete the current job with an explicit result status while the
+document remains in the recovery state. Manual reprocess requests enqueue a new
+job only when no active job exists and the document has not exhausted its
+bounded reprocess budget.
+
 ## Retry And Dead-Letter Rules
 
 - `queued`: ready to run

@@ -264,7 +264,12 @@ export function StudyWorkspace() {
 
     setError("");
     setIsSubmitting(true);
-    setStatusMessage("Retrying background generation for the active document.");
+    const recovery = workspaceState.recovery || workspaceState.document?.recovery;
+    setStatusMessage(
+      recovery?.actionLabel
+        ? `${recovery.actionLabel} for the active document.`
+        : "Retrying background generation for the active document.",
+    );
 
     try {
       const formData = new FormData();
@@ -867,6 +872,7 @@ function DocumentStatusStrip({ workspaceState }) {
 function DocumentStatePanel({ busy, onRetry, workspaceState, workspaceView }) {
   const document = workspaceState?.document;
   const job = workspaceState?.job;
+  const recovery = workspaceState?.recovery || document?.recovery || null;
 
   return (
     <div className="feed-body">
@@ -883,12 +889,28 @@ function DocumentStatePanel({ busy, onRetry, workspaceState, workspaceView }) {
           <div className="state-grid">
             <Metric label="Document" value={formatDocumentStatus(document?.status || "None")} />
             <Metric label="Worker" value={formatDocumentStatus(job?.status || "Idle")} />
-            <Metric label="Attempts" value={job ? `${job.attemptCount}/${job.maxAttempts}` : "0/0"} />
+            <Metric
+              label="Attempts"
+              value={job ? `${job.attemptCount}/${job.maxAttempts}` : "0/0"}
+            />
+            {recovery ? (
+              <Metric
+                label="Manual retries"
+                value={`${recovery.remainingManualAttempts || 0} left`}
+              />
+            ) : null}
           </div>
 
           <div className="state-copy">
             <strong>{workspaceView.label}</strong>
             <p>{describeWorkspaceStatus(workspaceState)}</p>
+            {recovery ? (
+              <div className="recovery-plan">
+                <span>{recovery.badge}</span>
+                <p>{recovery.nextStep}</p>
+                {recovery.blockedReason ? <p>{recovery.blockedReason}</p> : null}
+              </div>
+            ) : null}
             {document?.failureReason ? <p>{document.failureReason}</p> : null}
             {job?.lastError ? <p>{job.lastError}</p> : null}
             {isRecoverableWorkspace(workspaceState) ? (
@@ -898,7 +920,7 @@ function DocumentStatePanel({ busy, onRetry, workspaceState, workspaceView }) {
                 onClick={onRetry}
                 type="button"
               >
-                {busy ? "Retrying..." : "Retry generation"}
+                {busy ? "Retrying..." : recovery?.actionLabel || "Retry generation"}
               </button>
             ) : null}
           </div>
@@ -909,6 +931,11 @@ function DocumentStatePanel({ busy, onRetry, workspaceState, workspaceView }) {
 }
 
 function isRecoverableWorkspace(workspaceState) {
+  const recovery = workspaceState?.recovery || workspaceState?.document?.recovery;
+  if (recovery) {
+    return recovery.canRetry;
+  }
+
   const status = workspaceState?.document?.status;
   if (!workspaceState?.document?.id || !status) {
     return false;
@@ -972,11 +999,18 @@ function resolveLearningLabel(feedbackState, serverState = {}) {
 
 function buildProcessingBadge(workspaceState) {
   const status = workspaceState?.document?.status;
+  const recovery = workspaceState?.recovery || workspaceState?.document?.recovery;
   if (!status || status === "cards_generated") {
     return null;
   }
 
   const lastError = workspaceState?.job?.lastError;
+  if (recovery) {
+    return {
+      label: recovery.badge || "Recovery needed",
+      detail: recovery.detail || lastError || workspaceState?.document?.failureReason,
+    };
+  }
   if (status === "failed" || status === "parse_failed" || status === "ocr_needed") {
     return {
       label: "Processing stopped",
@@ -1014,7 +1048,12 @@ function describeWorkspaceStatus(workspaceState) {
     return "The document is processing in the background. Parsing, retrieval prep, and card generation are off the request path now.";
   }
   if (status === "parse_failed" || status === "ocr_needed" || status === "failed") {
-    return workspaceState?.document?.failureReason || "Background processing stopped before a feed was ready.";
+    const recovery = workspaceState?.recovery || workspaceState?.document?.recovery;
+    return (
+      recovery?.detail ||
+      workspaceState?.document?.failureReason ||
+      "Background processing stopped before a feed was ready."
+    );
   }
 
   return "The private study workspace is ready.";
@@ -1033,6 +1072,26 @@ function resolveWorkspaceView(workspaceState, hasReadyDeck = false) {
   }
 
   if (status === "failed" || status === "parse_failed" || status === "ocr_needed") {
+    const recovery = workspaceState?.recovery || workspaceState?.document?.recovery;
+    if (recovery?.kind === "ocr_needed") {
+      return {
+        kind: "failed ocr-needed",
+        badge: "OCR needed",
+        label: "Readable text was not found",
+        detail:
+          "This document needs OCR or a cleaner text layer before the feed can be grounded.",
+        tone: TONE.application.style,
+      };
+    }
+    if (recovery?.kind === "parse_failed") {
+      return {
+        kind: "failed parse-failed",
+        badge: "Parse failed",
+        label: "Parser recovery required",
+        detail: "The parser could not read this PDF structure. Retry with a cleaner copy.",
+        tone: TONE.pitfall.style,
+      };
+    }
     return {
       kind: "failed",
       badge: "Needs action",
