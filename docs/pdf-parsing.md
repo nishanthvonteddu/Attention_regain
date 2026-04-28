@@ -25,6 +25,11 @@ When the request is tied to a private upload record, the same state is persisted
 on the document and the upload is marked failed unless it has already been
 consumed.
 
+Day 11 adds the recovery contract in `docs/ocr-fallback.md`. Low-signal PDFs do
+not enter retrieval or generation. They stay in `ocr_needed` until the user
+supplies OCR-backed text or starts a bounded manual reprocess from the stored
+job payload.
+
 ## Stored Output
 
 - `documents.page_count` and `documents.parse_status` summarize the latest parse.
@@ -43,6 +48,7 @@ The parser tests cover:
 - invalid PDF parser failures
 - repository persistence for page rows and diagnostics
 - API failure responses for unreadable uploaded PDFs
+- OCR fallback recovery state and retry guard regressions
 
 The local fixture test also exercises `/Users/work/Downloads/AIAYN.pdf`,
 `/Users/work/Downloads/SAM.pdf`, and `/Users/work/Downloads/OPUS.pdf` when those
