@@ -196,6 +196,11 @@ test("study feed route returns explicit parse failure contracts", async () => {
     assert.equal(workspace.document.parseStatus, PDF_PARSE_STATUSES.PARSE_FAILED);
     assert.match(workspace.document.failureReason, /could not be parsed/i);
   } finally {
+    const { waitForScheduledDocumentJobs } = await import(
+      "../src/lib/jobs/document-processing-worker.js"
+    );
+    await waitForScheduledDocumentJobs();
+
     if (typeof previousDataDir === "string") {
       process.env.ATTENTION_REGAIN_DATA_DIR = previousDataDir;
     } else {

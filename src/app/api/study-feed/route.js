@@ -191,8 +191,9 @@ export async function PATCH(request) {
       );
     }
 
+    const repository = getDefaultStudyRepository();
     const payload = await request.json();
-    const interaction = await getDefaultStudyRepository().recordInteraction({
+    const interaction = await repository.recordInteraction({
       userId: session.user.id,
       sessionId: String(payload.sessionId || ""),
       cardId: String(payload.cardId || ""),
@@ -202,10 +203,11 @@ export async function PATCH(request) {
           ? ""
           : typeof payload.value === "string"
             ? payload.value
-            : JSON.stringify(payload.value),
+          : JSON.stringify(payload.value),
     });
+    const workspace = await repository.getLatestWorkspaceForUser(session.user.id);
 
-    return Response.json({ interaction });
+    return Response.json({ interaction, progress: workspace.deck?.progress || null });
   } catch (error) {
     return Response.json(
       {

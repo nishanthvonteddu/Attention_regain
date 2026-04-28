@@ -190,13 +190,11 @@ export function StudyWorkspace() {
     };
   }, [syncWorkspace, workspaceState?.job?.active]);
 
-  const feedbackValues = Object.values(feedback);
-  const sessionStats = {
-    locked: feedbackValues.filter((entry) => entry.confidence === "locked").length,
-    review: feedbackValues.filter((entry) => entry.confidence === "review").length,
-    saved: feedbackValues.filter((entry) => entry.saved).length,
-    revealed: feedbackValues.filter((entry) => entry.revealed).length,
-  };
+  const learningSummary = buildClientLearningSummary({
+    cards: visibleDeck?.cards || [],
+    feedback,
+    fallbackProgress: visibleDeck?.progress,
+  });
 
   async function handleGenerate(event) {
     event.preventDefault();
@@ -706,11 +704,12 @@ export function StudyWorkspace() {
                 </div>
 
                 <div className="metric-row">
-                  <Metric label="Locked in" value={sessionStats.locked} />
-                  <Metric label="Review again" value={sessionStats.review} />
-                  <Metric label="Saved" value={sessionStats.saved} />
-                  <Metric label="Revealed" value={sessionStats.revealed} />
+                  <Metric label="Progress" value={`${learningSummary.completionPercent}%`} />
+                  <Metric label="Locked in" value={learningSummary.lockedCards} />
+                  <Metric label="Review again" value={learningSummary.reviewAgainCards} />
+                  <Metric label="Saved" value={learningSummary.savedCards} />
                 </div>
+                <LearningProgressStrip progress={learningSummary} />
                 {!isPreview ? <DocumentStatusStrip workspaceState={workspaceState} /> : null}
               </header>
 
@@ -719,9 +718,13 @@ export function StudyWorkspace() {
                   {visibleDeck.cards.map((card) => {
                     const tone = TONE[card.kind] || TONE.glance;
                     const state = feedback[card.id] || EMPTY_FEEDBACK;
+                    const learningLabel = resolveLearningLabel(state, card.learningState);
+                    const queueLabel = card.resurfacing?.queue
+                      ? formatDocumentStatus(card.resurfacing.queue)
+                      : "Source Order";
 
                     return (
-                      <article className="feed-card" key={card.id}>
+                      <article className={`feed-card ${learningLabel.kind}`} key={card.id}>
                         <div className="feed-card-head">
                           <div>
                             <span className="tone" style={tone.style}>
@@ -736,6 +739,13 @@ export function StudyWorkspace() {
                           >
                             {state.saved ? "Saved" : "Save"}
                           </button>
+                        </div>
+                        <div className="learning-state-row">
+                          <span className={`learning-state ${learningLabel.kind}`}>
+                            {learningLabel.label}
+                          </span>
+                          <span>{queueLabel}</span>
+                          <span>Queue {card.queuePosition || card.sourceSequence + 1 || 1}</span>
                         </div>
 
                         <p>{card.body}</p>
@@ -784,6 +794,15 @@ export function StudyWorkspace() {
                           >
                             Review again
                           </button>
+                          {state.confidence === "review" ? (
+                            <span className="learning-hint">
+                              Returns early next session
+                            </span>
+                          ) : state.confidence === "locked" ? (
+                            <span className="learning-hint">
+                              Moved later in the queue
+                            </span>
+                          ) : null}
                           <span className="citation">{card.citation}</span>
                         </div>
                       </article>
@@ -811,6 +830,22 @@ function Metric({ label, value }) {
     <div className="metric">
       <label>{label}</label>
       <strong>{value}</strong>
+    </div>
+  );
+}
+
+function LearningProgressStrip({ progress }) {
+  return (
+    <div className={`learning-progress ${progress.status}`}>
+      <div>
+        <strong>{formatDocumentStatus(progress.status)}</strong>
+        <span>
+          {progress.touchedCards}/{progress.totalCards} touched, {progress.revealedCards} answers revealed
+        </span>
+      </div>
+      <div className="progress-track" aria-hidden="true">
+        <span style={{ width: `${progress.completionPercent}%` }} />
+      </div>
     </div>
   );
 }
@@ -880,6 +915,59 @@ function isRecoverableWorkspace(workspaceState) {
   }
 
   return status === "failed" || status === "parse_failed" || status === "ocr_needed";
+}
+
+function buildClientLearningSummary({ cards, feedback, fallbackProgress }) {
+  const totalCards = cards.length || fallbackProgress?.totalCards || 0;
+  const states = cards.map((card) => ({
+    ...(card.learningState || {}),
+    ...(feedback[card.id] || {}),
+  }));
+  const touchedCards = states.filter((state) =>
+    state.touched || state.saved || state.revealed || state.confidence,
+  ).length;
+  const lockedCards = states.filter((state) => state.confidence === "locked").length;
+  const reviewAgainCards = states.filter((state) => state.confidence === "review").length;
+  const savedCards = states.filter((state) => state.saved).length;
+  const revealedCards = states.filter((state) => state.revealed).length;
+
+  return {
+    totalCards,
+    touchedCards,
+    savedCards,
+    reviewAgainCards,
+    lockedCards,
+    revealedCards,
+    completionPercent: totalCards ? Math.round((lockedCards / totalCards) * 100) : 0,
+    status:
+      totalCards && lockedCards === totalCards
+        ? "complete"
+        : reviewAgainCards
+          ? "review_needed"
+          : touchedCards
+            ? "in_progress"
+            : "new",
+  };
+}
+
+function resolveLearningLabel(feedbackState, serverState = {}) {
+  const state = {
+    ...serverState,
+    ...feedbackState,
+  };
+  if (state.confidence === "review") {
+    return { kind: "review", label: state.saved ? "Saved + review again" : "Review again" };
+  }
+  if (state.confidence === "locked") {
+    return { kind: "locked", label: state.saved ? "Saved + locked in" : "Locked in" };
+  }
+  if (state.saved) {
+    return { kind: "saved", label: "Saved" };
+  }
+  if (state.revealed) {
+    return { kind: "seen", label: "Seen" };
+  }
+  return { kind: "new", label: serverState.label || "New" };
 }
 
 function buildProcessingBadge(workspaceState) {

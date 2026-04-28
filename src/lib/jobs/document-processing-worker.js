@@ -2,6 +2,8 @@ import { getDefaultStudyRepository } from "../data/repositories.js";
 import { runDocumentPipeline } from "../study/pipeline.js";
 
 const SCHEDULED_JOBS = new Set();
+const SCHEDULED_JOB_PROMISES = new Map();
+const SCHEDULED_JOB_TIMERS = new Map();
 
 export function scheduleDocumentProcessingJob({
   jobId,
@@ -14,15 +16,37 @@ export function scheduleDocumentProcessingJob({
   }
 
   SCHEDULED_JOBS.add(jobId);
-  const timer = setTimeout(async () => {
-    SCHEDULED_JOBS.delete(jobId);
-    await processDocumentProcessingJob({ jobId, repository, env });
-  }, delayMs);
+  let timer;
+  const scheduledJob = new Promise((resolve) => {
+    timer = setTimeout(async () => {
+      try {
+        await processDocumentProcessingJob({ jobId, repository, env });
+      } finally {
+        SCHEDULED_JOBS.delete(jobId);
+        SCHEDULED_JOB_PROMISES.delete(jobId);
+        SCHEDULED_JOB_TIMERS.delete(jobId);
+        resolve();
+      }
+    }, delayMs);
+  });
+  SCHEDULED_JOB_PROMISES.set(jobId, scheduledJob);
+  SCHEDULED_JOB_TIMERS.set(jobId, timer);
   if (typeof timer.unref === "function") {
     timer.unref();
   }
 
   return true;
+}
+
+export async function waitForScheduledDocumentJobs() {
+  while (SCHEDULED_JOB_PROMISES.size) {
+    for (const timer of SCHEDULED_JOB_TIMERS.values()) {
+      if (typeof timer.ref === "function") {
+        timer.ref();
+      }
+    }
+    await Promise.all([...SCHEDULED_JOB_PROMISES.values()]);
+  }
 }
 
 export async function processDocumentProcessingJob({

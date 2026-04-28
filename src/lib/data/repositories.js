@@ -905,6 +905,7 @@ async function recordInteraction(store, input) {
   const sessionId = requireNonEmpty(input.sessionId, "sessionId");
   const interactionType = requireNonEmpty(input.interactionType, "interactionType");
   assertAllowedValue("interaction", interactionType);
+  const value = normalizeInteractionValue(interactionType, input.value);
   const timestamp = nowIso();
   const interaction = {
     id: createPublicId("interaction"),
@@ -912,7 +913,7 @@ async function recordInteraction(store, input) {
     sessionId,
     cardId: typeof input.cardId === "string" && input.cardId ? input.cardId : null,
     interactionType,
-    value: typeof input.value === "string" ? input.value : "",
+    value,
     createdAt: timestamp,
   };
 
@@ -952,6 +953,10 @@ async function recordInteraction(store, input) {
 }
 
 function buildDeckResponse({ document, session, cards, interactions = [] }) {
+  const learningStateByCard = buildLearningStateByCard({ cards, interactions });
+  const orderedCards = orderCardsForLearningLoop(cards, learningStateByCard);
+  const progress = buildProgressSummary({ cards, interactions, learningStateByCard });
+
   return {
     documentId: document?.id || "",
     sessionId: session.id,
@@ -959,25 +964,46 @@ function buildDeckResponse({ document, session, cards, interactions = [] }) {
     goal: session.goal,
     sourceKind: document?.sourceKind || "paste",
     focusTags: Array.isArray(session.focusTags) ? session.focusTags : [],
-    cards: cards.map((card) => ({
-      id: card.id,
-      kind: card.kind,
-      title: card.title,
-      body: card.body,
-      question: card.question || undefined,
-      answer: card.answer || undefined,
-      excerpt: card.excerpt,
-      citation: card.citation,
-      chunkId: card.chunkId || undefined,
-      sourceReference: card.sourceReference || undefined,
-      status: card.status,
-    })),
-    feedback: buildFeedbackResponse({ cards, interactions }),
+    cards: orderedCards.map((card, queueIndex) => {
+      const learningState = learningStateByCard.get(card.id) || buildEmptyLearningState(card);
+      return {
+        id: card.id,
+        kind: card.kind,
+        title: card.title,
+        body: card.body,
+        question: card.question || undefined,
+        answer: card.answer || undefined,
+        excerpt: card.excerpt,
+        citation: card.citation,
+        chunkId: card.chunkId || undefined,
+        sourceReference: card.sourceReference || undefined,
+        status: card.status,
+        sourceSequence: card.sequence,
+        queuePosition: queueIndex + 1,
+        learningState,
+        resurfacing: buildResurfacingResponse(learningState, queueIndex),
+      };
+    }),
+    feedback: buildFeedbackResponse({ cards, interactions, learningStateByCard }),
+    progress,
+    sessionSummary: {
+      ...progress,
+      lastActionAt: progress.lastInteractionAt,
+      queue: {
+        nextCardId: orderedCards[0]?.id || "",
+        reviewAgainFirst: orderedCards[0]
+          ? (learningStateByCard.get(orderedCards[0].id)?.confidence || "") === "review"
+          : false,
+      },
+    },
     generationMode: session.generationMode,
     model: session.model,
     stats: {
       ...(session.stats || {}),
       cardCount: cards.length,
+      progressPercent: progress.completionPercent,
+      reviewAgainCount: progress.reviewAgainCards,
+      lockedCount: progress.lockedCards,
     },
     readyAt: session.readyAt || session.createdAt,
     lastActiveAt: session.updatedAt || session.readyAt || session.createdAt,
@@ -1074,35 +1100,197 @@ function buildJobResponse(job) {
   };
 }
 
-function buildFeedbackResponse({ cards, interactions }) {
-  const feedback = Object.fromEntries(
-    cards.map((card) => [
-      card.id,
-      {
-        confidence: null,
-        saved: card.status === "saved",
-        revealed: false,
-      },
-    ]),
+function buildFeedbackResponse({ cards, interactions, learningStateByCard }) {
+  const stateByCard = learningStateByCard || buildLearningStateByCard({ cards, interactions });
+  return Object.fromEntries(
+    cards.map((card) => {
+      const state = stateByCard.get(card.id) || buildEmptyLearningState(card);
+      return [
+        card.id,
+        {
+          confidence: state.confidence,
+          saved: state.saved,
+          revealed: state.revealed,
+        },
+      ];
+    }),
+  );
+}
+
+function buildLearningStateByCard({ cards, interactions }) {
+  const stateByCard = new Map(cards.map((card) => [card.id, buildEmptyLearningState(card)]));
+  const orderedInteractions = [...interactions].sort((left, right) =>
+    String(left.createdAt).localeCompare(String(right.createdAt)),
   );
 
-  for (const interaction of interactions) {
-    if (!interaction.cardId || !feedback[interaction.cardId]) {
+  for (const interaction of orderedInteractions) {
+    if (!interaction.cardId || !stateByCard.has(interaction.cardId)) {
       continue;
     }
 
+    const state = stateByCard.get(interaction.cardId);
+    state.actionCount += 1;
+    state.touched = true;
+    state.lastAction = interaction.interactionType;
+    state.lastInteractionAt = interaction.createdAt;
+
     if (interaction.interactionType === "save_card") {
-      feedback[interaction.cardId].saved = true;
+      state.saved = true;
     } else if (interaction.interactionType === "unsave_card") {
-      feedback[interaction.cardId].saved = false;
+      state.saved = false;
     } else if (interaction.interactionType === "reveal_answer") {
-      feedback[interaction.cardId].revealed = interaction.value !== "false";
+      state.revealed = interaction.value !== "false";
     } else if (interaction.interactionType === "set_confidence") {
-      feedback[interaction.cardId].confidence = interaction.value || null;
+      state.confidence = normalizeConfidence(interaction.value);
+    } else if (interaction.interactionType === "dismiss_card") {
+      state.dismissed = true;
     }
   }
 
-  return feedback;
+  for (const state of stateByCard.values()) {
+    Object.assign(state, buildLearningClassification(state));
+  }
+
+  return stateByCard;
+}
+
+function buildEmptyLearningState(card) {
+  return {
+    saved: card.status === "saved",
+    revealed: false,
+    confidence: null,
+    dismissed: card.status === "dismissed",
+    touched: card.status === "saved" || card.status === "dismissed",
+    actionCount: 0,
+    lastAction: "",
+    lastInteractionAt: "",
+    label: card.status === "saved" ? "Saved" : "New",
+    queue: card.status === "saved" ? "saved" : "new",
+    resurfaceScore: card.status === "saved" ? 70 : 50,
+  };
+}
+
+function buildLearningClassification(state) {
+  if (state.dismissed) {
+    return {
+      label: "Dismissed",
+      queue: "dismissed",
+      resurfaceScore: 0,
+    };
+  }
+  if (state.confidence === "review") {
+    return {
+      label: state.saved ? "Saved + review again" : "Review again",
+      queue: "review_again",
+      resurfaceScore: 100,
+    };
+  }
+  if (state.confidence === "locked") {
+    return {
+      label: state.saved ? "Saved + locked in" : "Locked in",
+      queue: "locked",
+      resurfaceScore: state.saved ? 35 : 20,
+    };
+  }
+  if (state.saved) {
+    return {
+      label: "Saved",
+      queue: "saved",
+      resurfaceScore: 70,
+    };
+  }
+  if (state.revealed) {
+    return {
+      label: "Seen",
+      queue: "seen",
+      resurfaceScore: 45,
+    };
+  }
+
+  return {
+    label: state.touched ? "In progress" : "New",
+    queue: state.touched ? "active" : "new",
+    resurfaceScore: state.touched ? 55 : 50,
+  };
+}
+
+function orderCardsForLearningLoop(cards, learningStateByCard) {
+  return [...cards].sort((left, right) => {
+    const leftState = learningStateByCard.get(left.id) || buildEmptyLearningState(left);
+    const rightState = learningStateByCard.get(right.id) || buildEmptyLearningState(right);
+    const scoreComparison = rightState.resurfaceScore - leftState.resurfaceScore;
+    if (scoreComparison !== 0) {
+      return scoreComparison;
+    }
+
+    const activityComparison = String(rightState.lastInteractionAt || "")
+      .localeCompare(String(leftState.lastInteractionAt || ""));
+    if (activityComparison !== 0) {
+      return activityComparison;
+    }
+
+    return left.sequence - right.sequence;
+  });
+}
+
+function buildProgressSummary({ cards, interactions, learningStateByCard }) {
+  const states = cards.map((card) => learningStateByCard.get(card.id) || buildEmptyLearningState(card));
+  const totalCards = cards.length;
+  const touchedCards = states.filter((state) => state.touched).length;
+  const lockedCards = states.filter((state) => state.confidence === "locked").length;
+  const reviewAgainCards = states.filter((state) => state.confidence === "review").length;
+  const savedCards = states.filter((state) => state.saved).length;
+  const revealedCards = states.filter((state) => state.revealed).length;
+  const dismissedCards = states.filter((state) => state.dismissed).length;
+  const lastInteractionAt = maxIso(interactions.map((interaction) => interaction.createdAt));
+
+  return {
+    totalCards,
+    touchedCards,
+    untouchedCards: Math.max(0, totalCards - touchedCards),
+    savedCards,
+    reviewAgainCards,
+    lockedCards,
+    revealedCards,
+    dismissedCards,
+    activeCards: Math.max(0, totalCards - dismissedCards),
+    completionPercent: totalCards ? Math.round((lockedCards / totalCards) * 100) : 0,
+    touchedPercent: totalCards ? Math.round((touchedCards / totalCards) * 100) : 0,
+    actionCount: interactions.length,
+    lastInteractionAt,
+    status:
+      totalCards && lockedCards === totalCards
+        ? "complete"
+        : reviewAgainCards > 0
+          ? "review_needed"
+          : touchedCards > 0
+            ? "in_progress"
+            : "new",
+  };
+}
+
+function buildResurfacingResponse(state, queueIndex) {
+  return {
+    queue: state.queue,
+    score: state.resurfaceScore,
+    reason:
+      state.queue === "review_again"
+        ? "Marked review again, so it returns before lower-risk cards."
+        : state.queue === "locked"
+          ? "Locked in, so it moves later in the review queue."
+          : state.queue === "saved"
+            ? "Saved, so it stays easy to find without becoming weak-card priority."
+            : "No weak-card signal yet; source order breaks ties.",
+    position: queueIndex + 1,
+  };
+}
+
+function normalizeConfidence(value) {
+  const normalized = String(value || "").trim();
+  if (normalized === "locked" || normalized === "review") {
+    return normalized;
+  }
+  return null;
 }
 
 function selectLastActiveDocument(current, ownerId) {
@@ -1377,4 +1565,24 @@ function requirePositiveInteger(value, label) {
     throw new Error(`Missing required positive persistence field: ${label}`);
   }
   return value;
+}
+
+function normalizeInteractionValue(interactionType, value) {
+  const normalized = typeof value === "string" ? value.trim() : "";
+  if (interactionType === "set_confidence") {
+    if (!normalized || normalized === "locked" || normalized === "review") {
+      return normalized;
+    }
+    throw new Error("Confidence must be locked, review, or empty.");
+  }
+  if (interactionType === "reveal_answer") {
+    return normalized === "false" ? "false" : "true";
+  }
+  if (interactionType === "save_card") {
+    return "true";
+  }
+  if (interactionType === "unsave_card" || interactionType === "dismiss_card") {
+    return normalized || "true";
+  }
+  return normalized;
 }
