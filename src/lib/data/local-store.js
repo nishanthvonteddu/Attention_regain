@@ -1,9 +1,12 @@
-import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
+import { randomUUID } from "node:crypto";
+import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 
 import { createEmptyJsonStore, normalizeJsonStore } from "./schema.js";
 
 export const LOCAL_STORE_FILE_NAME = "attention-regain-store.json";
+
+const storeOperationLocks = new Map();
 
 export function getLocalDataDir(env = process.env) {
   const configured = typeof env.ATTENTION_REGAIN_DATA_DIR === "string"
@@ -19,13 +22,21 @@ export class LocalJsonStore {
   }
 
   async read() {
+    return this.readUnlocked();
+  }
+
+  async readUnlocked({ lockOnMissing = true } = {}) {
     try {
       const raw = await readFile(this.filePath, "utf8");
       return normalizeJsonStore(JSON.parse(raw));
     } catch (error) {
       if (error && typeof error === "object" && error.code === "ENOENT") {
         const empty = createEmptyJsonStore();
-        await this.write(empty);
+        if (lockOnMissing) {
+          await this.write(empty);
+        } else {
+          await this.writeUnlocked(empty);
+        }
         return empty;
       }
 
@@ -34,18 +45,29 @@ export class LocalJsonStore {
   }
 
   async write(nextStore) {
+    return withStoreOperationLock(this.filePath, () => this.writeUnlocked(nextStore));
+  }
+
+  async writeUnlocked(nextStore) {
     const normalized = normalizeJsonStore(nextStore);
     await mkdir(this.dataDir, { recursive: true });
-    const tempPath = `${this.filePath}.${process.pid}.${Date.now()}.tmp`;
-    await writeFile(tempPath, `${JSON.stringify(normalized, null, 2)}\n`, "utf8");
-    await rename(tempPath, this.filePath);
+    const tempPath = `${this.filePath}.${process.pid}.${Date.now()}.${randomUUID()}.tmp`;
+    try {
+      await writeFile(tempPath, `${JSON.stringify(normalized, null, 2)}\n`, "utf8");
+      await rename(tempPath, this.filePath);
+    } catch (error) {
+      await rm(tempPath, { force: true }).catch(() => {});
+      throw error;
+    }
     return normalized;
   }
 
   async update(mutator) {
-    const current = await this.read();
-    const next = await mutator(current);
-    return this.write(next || current);
+    return withStoreOperationLock(this.filePath, async () => {
+      const current = await this.readUnlocked({ lockOnMissing: false });
+      const next = await mutator(current);
+      return this.writeUnlocked(next || current);
+    });
   }
 
   async reset(seed = createEmptyJsonStore()) {
@@ -55,4 +77,24 @@ export class LocalJsonStore {
 
 export function createLocalJsonStore(options) {
   return new LocalJsonStore(options);
+}
+
+async function withStoreOperationLock(filePath, operation) {
+  const previous = storeOperationLocks.get(filePath) || Promise.resolve();
+  let release;
+  const current = new Promise((resolve) => {
+    release = resolve;
+  });
+  const nextLock = previous.then(() => current, () => current);
+  storeOperationLocks.set(filePath, nextLock);
+
+  await previous.catch(() => {});
+  try {
+    return await operation();
+  } finally {
+    release();
+    if (storeOperationLocks.get(filePath) === nextLock) {
+      storeOperationLocks.delete(filePath);
+    }
+  }
 }

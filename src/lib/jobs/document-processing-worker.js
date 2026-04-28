@@ -3,6 +3,7 @@ import { runDocumentPipeline } from "../study/pipeline.js";
 
 const SCHEDULED_JOBS = new Set();
 const SCHEDULED_JOB_PROMISES = new Map();
+const SCHEDULED_JOB_TIMERS = new Map();
 
 export function scheduleDocumentProcessingJob({
   jobId,
@@ -23,11 +24,13 @@ export function scheduleDocumentProcessingJob({
       } finally {
         SCHEDULED_JOBS.delete(jobId);
         SCHEDULED_JOB_PROMISES.delete(jobId);
+        SCHEDULED_JOB_TIMERS.delete(jobId);
         resolve();
       }
     }, delayMs);
   });
   SCHEDULED_JOB_PROMISES.set(jobId, scheduledJob);
+  SCHEDULED_JOB_TIMERS.set(jobId, timer);
   if (typeof timer.unref === "function") {
     timer.unref();
   }
@@ -37,6 +40,11 @@ export function scheduleDocumentProcessingJob({
 
 export async function waitForScheduledDocumentJobs() {
   while (SCHEDULED_JOB_PROMISES.size) {
+    for (const timer of SCHEDULED_JOB_TIMERS.values()) {
+      if (typeof timer.ref === "function") {
+        timer.ref();
+      }
+    }
     await Promise.all([...SCHEDULED_JOB_PROMISES.values()]);
   }
 }

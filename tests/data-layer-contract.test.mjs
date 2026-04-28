@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdtemp, readdir, readFile, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -51,6 +51,41 @@ test("core migration covers the MVP persistence tables and ownership keys", asyn
   assert.match(migration, /user_id TEXT NOT NULL REFERENCES users\(id\)/);
   assert.match(migration, /status IN \('draft', 'uploaded', 'parsed', 'chunked', 'cards_generated', 'failed'\)/);
   assert.match(migration, /interaction_type IN/);
+});
+
+test("local JSON store serializes concurrent updates for the same file", async () => {
+  const dataDir = await mkdtemp(path.join(os.tmpdir(), "attention-regain-store-race-"));
+  const stores = [createLocalJsonStore({ dataDir }), createLocalJsonStore({ dataDir })];
+
+  try {
+    await Promise.all(
+      Array.from({ length: 20 }, (_, index) =>
+        stores[index % stores.length].update((current) => ({
+          ...current,
+          users: [
+            ...current.users,
+            {
+              id: `race-user-${index}`,
+              email: `race-user-${index}@example.com`,
+              displayName: `Race User ${index}`,
+              createdAt: "2026-04-27T00:00:00.000Z",
+              updatedAt: "2026-04-27T00:00:00.000Z",
+            },
+          ],
+        })),
+      ),
+    );
+
+    const persisted = await stores[0].read();
+    const userIds = persisted.users.map((user) => user.id).filter((id) => id.startsWith("race-"));
+    const files = await readdir(dataDir);
+
+    assert.equal(userIds.length, 20);
+    assert.equal(new Set(userIds).size, 20);
+    assert.deepEqual(files.filter((file) => file.endsWith(".tmp")), []);
+  } finally {
+    await rm(dataDir, { recursive: true, force: true });
+  }
 });
 
 test("repository persists and reloads a generated deck for one user", async () => {
