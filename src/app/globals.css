@@ -777,7 +777,7 @@ textarea:focus-visible {
 
 .state-grid {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(128px, 1fr));
   gap: 10px;
 }
 
@@ -809,6 +809,23 @@ textarea:focus-visible {
   font-size: 0.86rem;
   text-transform: uppercase;
   letter-spacing: 0.18em;
+}
+
+.recovery-plan {
+  display: grid;
+  gap: 8px;
+  padding: 14px;
+  border-radius: 22px;
+  border: 1px solid rgba(145, 93, 10, 0.18);
+  background: rgba(255, 255, 255, 0.5);
+}
+
+.recovery-plan span {
+  color: #7b5008;
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
 }
 
 .feed-card-head {
