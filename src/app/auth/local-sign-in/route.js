@@ -6,6 +6,7 @@ import {
   buildProductSessionCookie,
 } from "../../../lib/auth/session.server.js";
 import { createAuthenticatedProductSession } from "../../../lib/auth/session-shared.js";
+import { checkRateLimit, rateLimitResponse } from "../../../lib/security/rate-limit.js";
 
 function createStableLocalUserId(displayName, email) {
   const base = (email || displayName || "reader")
@@ -18,6 +19,11 @@ function createStableLocalUserId(displayName, email) {
 }
 
 export async function POST(request) {
+  const rateLimit = checkRateLimit({ request, scope: "auth" });
+  if (!rateLimit.allowed) {
+    return rateLimitResponse(rateLimit);
+  }
+
   const authReport = getCognitoAuthReport();
   const formData = await request.formData();
   const displayName = String(formData.get("displayName") || "").trim();
