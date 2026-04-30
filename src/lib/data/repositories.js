@@ -8,6 +8,10 @@ import {
 } from "./schema.js";
 import { createLocalJsonStore } from "./local-store.js";
 import { buildRecoveryContract } from "../documents/ocr-routing.js";
+import {
+  createProductEvent,
+  summarizeOperationalEvents,
+} from "../observability/product-events.js";
 import { assertPersistableGeneratedDeck } from "../study/card-contract.js";
 
 export function createStudyRepository({ store = createLocalJsonStore() } = {}) {
@@ -68,6 +72,12 @@ export function createStudyRepository({ store = createLocalJsonStore() } = {}) {
     },
     recordInteraction(input) {
       return recordInteraction(store, input);
+    },
+    recordProductEvent(input) {
+      return recordProductEvent(store, input);
+    },
+    getOperationalReportForUser(userId) {
+      return getOperationalReportForUser(store, userId);
     },
     reset(seed) {
       return store.reset(seed);
@@ -1001,6 +1011,37 @@ async function recordInteraction(store, input) {
   });
 
   return interaction;
+}
+
+async function recordProductEvent(store, input) {
+  const event = createProductEvent(input);
+
+  await store.update((current) => ({
+    ...current,
+    observabilityEvents: [...current.observabilityEvents, event],
+  }));
+
+  return event;
+}
+
+async function getOperationalReportForUser(store, userId) {
+  const ownerId = requireNonEmpty(userId, "userId");
+  const current = await store.read();
+  const documents = current.documents.filter((entry) => entry.userId === ownerId);
+  const documentIds = new Set(documents.map((document) => document.id));
+  const jobs = current.documentJobs.filter((entry) => entry.userId === ownerId);
+  const sessions = current.studySessions.filter((entry) => entry.userId === ownerId);
+  const events = current.observabilityEvents.filter((entry) => {
+    if (entry.userId !== ownerId) {
+      return false;
+    }
+    if (!entry.documentId) {
+      return true;
+    }
+    return documentIds.has(entry.documentId);
+  });
+
+  return summarizeOperationalEvents({ documents, jobs, sessions, events });
 }
 
 function buildDeckResponse({ document, session, cards, interactions = [] }) {
