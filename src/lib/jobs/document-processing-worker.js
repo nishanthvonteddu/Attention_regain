@@ -59,6 +59,15 @@ export async function processDocumentProcessingJob({
   if (!job) {
     return null;
   }
+  await recordWorkerEvent(repository, {
+    eventName: "job.claimed",
+    stage: "worker",
+    status: "started",
+    userId: job.userId,
+    documentId: job.documentId,
+    jobId: job.id,
+    payload: { attemptCount: job.attemptCount, workerId },
+  });
 
   try {
     const payload = job.payload && typeof job.payload === "object" ? job.payload : {};
@@ -72,10 +81,29 @@ export async function processDocumentProcessingJob({
       env,
     });
 
+    const completedAt = Date.now();
     await repository.completeDocumentProcessingJob({
       jobId: job.id,
       resultStatus: result.documentStatus || result.stats?.parseStatus || "cards_generated",
     });
+    if (result.id || result.sessionId || result.documentStatus === "cards_generated") {
+      await recordWorkerEvent(repository, {
+        eventName: "feed.ready",
+        stage: "feed",
+        status: "succeeded",
+        userId: job.userId,
+        documentId: job.documentId,
+        sessionId: result.sessionId,
+        jobId: job.id,
+        latencyMs: completedAt - Date.parse(job.createdAt),
+        cost: result.stats?.modelCost,
+        payload: {
+          resultStatus: result.documentStatus || result.stats?.parseStatus || "cards_generated",
+          generationMode: result.generationMode,
+          model: result.model,
+        },
+      });
+    }
     return result;
   } catch (error) {
     const failedJob = await repository.failDocumentProcessingJob({
@@ -85,14 +113,45 @@ export async function processDocumentProcessingJob({
     });
 
     if (failedJob?.status === "retrying") {
+      await recordWorkerEvent(repository, {
+        eventName: "job.retrying",
+        stage: "worker",
+        status: "retrying",
+        userId: failedJob.userId,
+        documentId: failedJob.documentId,
+        jobId: failedJob.id,
+        payload: { reason: failedJob.lastError, attemptCount: failedJob.attemptCount },
+      });
       scheduleDocumentProcessingJob({
         jobId: failedJob.id,
         repository,
         env,
         delayMs: failedJob.retryDelayMs || 250,
       });
+    } else if (failedJob?.status === "dead_letter") {
+      await recordWorkerEvent(repository, {
+        eventName: "job.dead_lettered",
+        stage: "worker",
+        status: "failed",
+        userId: failedJob.userId,
+        documentId: failedJob.documentId,
+        jobId: failedJob.id,
+        payload: { reason: failedJob.lastError, attemptCount: failedJob.attemptCount },
+      });
     }
 
     return failedJob;
+  }
+}
+
+async function recordWorkerEvent(repository, input) {
+  if (typeof repository?.recordProductEvent !== "function") {
+    return null;
+  }
+
+  try {
+    return await repository.recordProductEvent(input);
+  } catch {
+    return null;
   }
 }
