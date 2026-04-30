@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import { buildSignInPath, getAuthErrorMessage, normalizeRedirectPath } from "../src/lib/auth/flow.js";
+import { requestHasSameOrigin } from "../src/lib/auth/request.js";
 
 function withTemporaryAuthEnv(overrides, run) {
   const previous = new Map();
@@ -42,6 +43,31 @@ test("sign-in paths preserve redirect and auth errors", () => {
 
   assert.equal(path, "/auth/sign-in?redirect=%2Fapp&error=auth_required");
   assert.match(getAuthErrorMessage("auth_required"), /Sign in before opening/i);
+});
+
+test("same-origin guard accepts browser host origin even when request url is normalized", () => {
+  assert.equal(
+    requestHasSameOrigin(
+      new Request("http://localhost:3031/api/study-feed", {
+        headers: {
+          host: "127.0.0.1:3031",
+          origin: "http://127.0.0.1:3031",
+        },
+      }),
+    ),
+    true,
+  );
+  assert.equal(
+    requestHasSameOrigin(
+      new Request("http://localhost:3031/api/study-feed", {
+        headers: {
+          host: "127.0.0.1:3031",
+          origin: "https://attacker.example",
+        },
+      }),
+    ),
+    false,
+  );
 });
 
 test("local preview sign-in route mints a session cookie and redirects", async () => {
