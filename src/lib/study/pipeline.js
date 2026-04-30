@@ -1,5 +1,9 @@
 import { getEnvironmentReport } from "../env.js";
 import {
+  createZeroModelCost,
+  estimateModelCost,
+} from "../observability/product-events.js";
+import {
   extractPdfFile,
   normalizeExtractedText,
   PDF_PARSE_STATUSES,
@@ -81,7 +85,19 @@ export async function runDocumentPipeline({
   repository,
   env = process.env,
 }) {
+  const pipelineStartedAt = Date.now();
+  const stageTimings = {};
+  await recordPipelineEvent(repository, {
+    eventName: "parse.started",
+    stage: "parse",
+    status: "started",
+    userId: user.id,
+    documentId,
+    payload: { sourceType: source?.type || "unknown" },
+  });
+  const parseStartedAt = Date.now();
   const extraction = await extractQueuedSource({ source, title });
+  stageTimings.parseMs = Date.now() - parseStartedAt;
   if (!extraction.ok) {
     const routing = buildOcrRoutingDecision({
       status: extraction.status,
@@ -94,6 +110,18 @@ export async function runDocumentPipeline({
       status: extraction.status,
       failureReason: routing.userMessage || extraction.error,
       diagnostics: extraction.diagnostics,
+    });
+    await recordPipelineEvent(repository, {
+      eventName: "parse.failed",
+      stage: "parse",
+      status: "failed",
+      userId: user.id,
+      documentId,
+      latencyMs: stageTimings.parseMs,
+      payload: {
+        code: extraction.code,
+        reason: routing.userMessage || extraction.error,
+      },
     });
 
     return {
@@ -108,6 +136,7 @@ export async function runDocumentPipeline({
   if (!sourceText) {
     throw new Error("No readable source text was provided.");
   }
+  const wordCount = sourceText.split(/\s+/).filter(Boolean).length;
 
   const pages = extraction.pages.length
     ? extraction.pages.map((page) => ({
@@ -127,7 +156,20 @@ export async function runDocumentPipeline({
     pages,
     diagnostics: extraction.diagnostics,
   });
+  await recordPipelineEvent(repository, {
+    eventName: "parse.succeeded",
+    stage: "parse",
+    status: "succeeded",
+    userId: user.id,
+    documentId,
+    latencyMs: stageTimings.parseMs,
+    payload: {
+      pageCount: extraction.diagnostics?.pageCount || pages.length,
+      wordCount: extraction.diagnostics?.wordCount || wordCount,
+    },
+  });
 
+  const chunkingStartedAt = Date.now();
   const chunks = buildDocumentChunks(pages);
   if (!chunks.length) {
     throw new Error("The source did not produce enough readable passages to build cards.");
@@ -137,13 +179,24 @@ export async function runDocumentPipeline({
     documentId,
     chunks,
   });
+  stageTimings.chunkingMs = Date.now() - chunkingStartedAt;
+  await recordPipelineEvent(repository, {
+    eventName: "chunking.succeeded",
+    stage: "chunking",
+    status: "succeeded",
+    userId: user.id,
+    documentId,
+    latencyMs: stageTimings.chunkingMs,
+    payload: { chunkCount: persistedChunks.length },
+  });
+  const retrievalStartedAt = Date.now();
   const retrieval = selectRetrievalPassages(persistedChunks, {
     title: extraction.title || title,
     goal,
   });
   const passages = retrieval.passages;
+  stageTimings.retrievalMs = Date.now() - retrievalStartedAt;
 
-  const wordCount = sourceText.split(/\s+/).filter(Boolean).length;
   const baseDeck = {
     documentTitle: extraction.title || title || "Untitled study source",
     goal,
@@ -157,12 +210,29 @@ export async function runDocumentPipeline({
       parseStatus: extraction.status,
       pageCount: extraction.diagnostics?.pageCount || pages.length,
       extractedWordCount: extraction.diagnostics?.wordCount || wordCount,
+      pipelineTiming: stageTimings,
     },
   };
 
   const environment = getEnvironmentReport(env);
   if (!environment.generation.enabled) {
+    const fallbackCost = createZeroModelCost({
+      model: "heuristic-fallback",
+      reason: "live_generation_disabled",
+    });
+    const generationStartedAt = Date.now();
     const fallbackDeck = buildFallbackDeck({ passages, goal });
+    stageTimings.generationMs = Date.now() - generationStartedAt;
+    await recordPipelineEvent(repository, {
+      eventName: "generation.fallback",
+      stage: "generation",
+      status: "fallback",
+      userId: user.id,
+      documentId,
+      latencyMs: stageTimings.generationMs,
+      cost: fallbackCost,
+      payload: { reason: "live_generation_disabled", cardCount: fallbackDeck.cards.length },
+    });
     return persistDeck({
       payload: {
         ...baseDeck,
@@ -177,6 +247,11 @@ export async function runDocumentPipeline({
           ...baseDeck.stats,
           ...fallbackDeck.stats,
           cardCount: fallbackDeck.cards.length,
+          modelCost: fallbackCost,
+          pipelineTiming: {
+            ...stageTimings,
+            totalMs: Date.now() - pipelineStartedAt,
+          },
         },
       },
       passages,
@@ -187,12 +262,35 @@ export async function runDocumentPipeline({
   }
 
   try {
+    await recordPipelineEvent(repository, {
+      eventName: "generation.started",
+      stage: "generation",
+      status: "started",
+      userId: user.id,
+      documentId,
+      payload: {
+        model: environment.generation.model,
+        passageCount: passages.length,
+      },
+    });
+    const generationStartedAt = Date.now();
     const aiDeck = await generateDeckWithNvidia({
       documentTitle: baseDeck.documentTitle,
       goal,
       passages,
       apiKey: environment.generation.apiKey,
       model: environment.generation.model,
+    });
+    stageTimings.generationMs = Date.now() - generationStartedAt;
+    await recordPipelineEvent(repository, {
+      eventName: "generation.succeeded",
+      stage: "generation",
+      status: "succeeded",
+      userId: user.id,
+      documentId,
+      latencyMs: stageTimings.generationMs,
+      cost: aiDeck.stats.modelCost,
+      payload: { model: environment.generation.model, cardCount: aiDeck.cards.length },
     });
 
     return persistDeck({
@@ -206,6 +304,10 @@ export async function runDocumentPipeline({
           ...baseDeck.stats,
           ...aiDeck.stats,
           cardCount: aiDeck.cards.length,
+          pipelineTiming: {
+            ...stageTimings,
+            totalMs: Date.now() - pipelineStartedAt,
+          },
         },
       },
       passages,
@@ -214,8 +316,31 @@ export async function runDocumentPipeline({
       documentId,
     });
   } catch (generationError) {
+    const generationFailureCost = createZeroModelCost({
+      model: environment.generation.model,
+      reason: "fallback_after_generation_failure",
+    });
     const fallbackDeck = buildFallbackDeck({ passages, goal });
     const generationFailure = describeGenerationFailure(generationError);
+    stageTimings.generationMs = stageTimings.generationMs || Date.now() - pipelineStartedAt;
+    await recordPipelineEvent(repository, {
+      eventName: "generation.failed",
+      stage: "generation",
+      status: "failed",
+      userId: user.id,
+      documentId,
+      latencyMs: stageTimings.generationMs,
+      payload: generationFailure,
+    });
+    await recordPipelineEvent(repository, {
+      eventName: "generation.fallback",
+      stage: "generation",
+      status: "fallback",
+      userId: user.id,
+      documentId,
+      cost: generationFailureCost,
+      payload: { reason: generationFailure.code, cardCount: fallbackDeck.cards.length },
+    });
     return persistDeck({
       payload: {
         ...baseDeck,
@@ -232,6 +357,11 @@ export async function runDocumentPipeline({
           ...fallbackDeck.stats,
           generationFailure,
           cardCount: fallbackDeck.cards.length,
+          modelCost: generationFailureCost,
+          pipelineTiming: {
+            ...stageTimings,
+            totalMs: Date.now() - pipelineStartedAt,
+          },
         },
       },
       passages,
@@ -361,6 +491,18 @@ async function persistDeck({
   };
 }
 
+async function recordPipelineEvent(repository, input) {
+  if (typeof repository?.recordProductEvent !== "function") {
+    return null;
+  }
+
+  try {
+    return await repository.recordProductEvent(input);
+  } catch {
+    return null;
+  }
+}
+
 async function generateDeckWithNvidia({ documentTitle, goal, passages, apiKey, model }) {
   const prompt = buildGenerationPrompt({ documentTitle, goal, passages });
   const response = await fetch(NVIDIA_API_URL, {
@@ -414,7 +556,15 @@ async function generateDeckWithNvidia({ documentTitle, goal, passages, apiKey, m
   return {
     focusTags: validated.focusTags,
     cards: validated.cards,
-    stats: validated.stats,
+    stats: {
+      ...validated.stats,
+      modelCost: estimateModelCost({
+        model,
+        prompt,
+        output: rawContent,
+        usage: payload?.usage,
+      }),
+    },
   };
 }
 
