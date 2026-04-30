@@ -23,7 +23,10 @@ import {
   createDocumentProcessingPayload,
   DOCUMENT_PROCESSING_QUEUE,
 } from "../src/lib/jobs/document-processing.js";
-import { processDocumentProcessingJob } from "../src/lib/jobs/document-processing-worker.js";
+import {
+  processDocumentProcessingJob,
+  waitForScheduledDocumentJobs,
+} from "../src/lib/jobs/document-processing-worker.js";
 
 const PASSAGES = [
   {
@@ -239,6 +242,7 @@ test("Day 08 failed document jobs can be retried from stored payloads", async ()
     assert.equal(payload.retried, true);
     assert.equal(payload.document.status, "queued");
     assert.equal(payload.job.status, "queued");
+    await waitForScheduledDocumentJobs();
   } finally {
     if (typeof previousDataDir === "string") {
       process.env.ATTENTION_REGAIN_DATA_DIR = previousDataDir;
