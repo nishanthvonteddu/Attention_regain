@@ -31,6 +31,7 @@ export async function POST(request) {
     }
 
     const payload = await request.json();
+    const repository = getDefaultStudyRepository();
     const handshake = await createPrivateUploadHandshake({
       user: session.user,
       title: String(payload.title || ""),
@@ -43,6 +44,13 @@ export async function POST(request) {
     });
 
     if (!handshake.ok) {
+      await recordRouteEvent(repository, {
+        eventName: "upload.rejected",
+        stage: "upload",
+        status: "failed",
+        userId: session.user.id,
+        payload: { code: handshake.code, reason: handshake.error },
+      });
       return Response.json(
         {
           error: handshake.error,
@@ -52,6 +60,18 @@ export async function POST(request) {
         { status: 400 },
       );
     }
+    await recordRouteEvent(repository, {
+      eventName: "upload.prepared",
+      stage: "upload",
+      status: "succeeded",
+      userId: session.user.id,
+      documentId: handshake.upload.documentId,
+      payload: {
+        contentType: handshake.upload.contentType,
+        sizeBytes: handshake.upload.sizeBytes,
+        provider: handshake.upload.provider,
+      },
+    });
 
     return Response.json({ upload: handshake.upload }, { status: 201 });
   } catch (error) {
@@ -89,10 +109,23 @@ export async function PATCH(request) {
     }
 
     const payload = await request.json();
-    const upload = await getDefaultStudyRepository().markDocumentUploadUploaded({
+    const repository = getDefaultStudyRepository();
+    const upload = await repository.markDocumentUploadUploaded({
       userId: session.user.id,
       documentId: String(payload.documentId || ""),
       etag: typeof payload.etag === "string" ? payload.etag : "",
+    });
+    await recordRouteEvent(repository, {
+      eventName: "upload.confirmed",
+      stage: "upload",
+      status: "succeeded",
+      userId: session.user.id,
+      documentId: upload.documentId,
+      payload: {
+        provider: upload.provider,
+        contentType: upload.contentType,
+        sizeBytes: upload.sizeBytes,
+      },
     });
 
     return Response.json({
@@ -114,5 +147,17 @@ export async function PATCH(request) {
       },
       { status: 400 },
     );
+  }
+}
+
+async function recordRouteEvent(repository, input) {
+  if (typeof repository?.recordProductEvent !== "function") {
+    return null;
+  }
+
+  try {
+    return await repository.recordProductEvent(input);
+  } catch {
+    return null;
   }
 }
