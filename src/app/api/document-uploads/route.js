@@ -4,6 +4,7 @@ import {
 } from "../../../lib/auth/session.server.js";
 import { requestHasSameOrigin } from "../../../lib/auth/request.js";
 import { getDefaultStudyRepository } from "../../../lib/data/repositories.js";
+import { checkRateLimit, rateLimitResponse } from "../../../lib/security/rate-limit.js";
 import { createPrivateUploadHandshake } from "../../../lib/uploads/private-upload-service.js";
 
 export const runtime = "nodejs";
@@ -19,6 +20,14 @@ export async function POST(request) {
     }
     if (!requestHasSameOrigin(request)) {
       return Response.json({ error: "Document upload writes must be same-origin." }, { status: 403 });
+    }
+    const rateLimit = checkRateLimit({
+      request,
+      scope: "upload",
+      userId: session.user.id,
+    });
+    if (!rateLimit.allowed) {
+      return rateLimitResponse(rateLimit);
     }
 
     const payload = await request.json();
@@ -69,6 +78,14 @@ export async function PATCH(request) {
     }
     if (!requestHasSameOrigin(request)) {
       return Response.json({ error: "Document upload writes must be same-origin." }, { status: 403 });
+    }
+    const rateLimit = checkRateLimit({
+      request,
+      scope: "upload",
+      userId: session.user.id,
+    });
+    if (!rateLimit.allowed) {
+      return rateLimitResponse(rateLimit);
     }
 
     const payload = await request.json();

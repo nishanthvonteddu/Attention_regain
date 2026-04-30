@@ -12,6 +12,7 @@ import {
 } from "../../../lib/jobs/document-processing.js";
 import { canRetryRecovery } from "../../../lib/documents/ocr-routing.js";
 import { scheduleDocumentProcessingJob } from "../../../lib/jobs/document-processing-worker.js";
+import { checkRateLimit, rateLimitResponse } from "../../../lib/security/rate-limit.js";
 
 export const runtime = "nodejs";
 
@@ -29,6 +30,14 @@ export async function POST(request) {
     }
     if (!requestHasSameOrigin(request)) {
       return Response.json({ error: "Study feed writes must be same-origin." }, { status: 403 });
+    }
+    const rateLimit = checkRateLimit({
+      request,
+      scope: "generation",
+      userId: session.user.id,
+    });
+    if (!rateLimit.allowed) {
+      return rateLimitResponse(rateLimit);
     }
 
     const formData = await request.formData();
@@ -115,6 +124,12 @@ export async function POST(request) {
         return Response.json(
           { error: "The upload record was not found for this user." },
           { status: 400 },
+        );
+      }
+      if (upload.status !== "uploaded") {
+        return Response.json(
+          { error: "The private upload must finish before processing can start." },
+          { status: 409 },
         );
       }
     }
@@ -211,6 +226,14 @@ export async function PATCH(request) {
         { error: "Study interaction writes must be same-origin." },
         { status: 403 },
       );
+    }
+    const rateLimit = checkRateLimit({
+      request,
+      scope: "interaction",
+      userId: session.user.id,
+    });
+    if (!rateLimit.allowed) {
+      return rateLimitResponse(rateLimit);
     }
 
     const repository = getDefaultStudyRepository();
