@@ -133,10 +133,10 @@ test("study feed GET restores server state after a refresh-like route load", asy
     const accepted = await response.json();
     assert.equal(response.status, 202);
 
-    const { processDocumentProcessingJob } = await import(
+    const { waitForScheduledDocumentJobs } = await import(
       "../src/lib/jobs/document-processing-worker.js"
     );
-    await processDocumentProcessingJob({ jobId: accepted.job.id });
+    await waitForScheduledDocumentJobs();
 
     const readyResponse = await GET(
       new Request("http://localhost/api/study-feed", {
