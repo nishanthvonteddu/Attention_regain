@@ -56,6 +56,7 @@ export function StudyWorkspace() {
   const [workspaceState, setWorkspaceState] = useState(null);
   const [deck, setDeck] = useState(null);
   const [feedback, setFeedback] = useState({});
+  const [operatorReport, setOperatorReport] = useState(null);
   const [error, setError] = useState("");
   const [statusMessage, setStatusMessage] = useState(
     "The private workspace is ready. Upload a paper or paste notes to turn this session into a grounded study feed.",
@@ -114,12 +115,14 @@ export function StudyWorkspace() {
         setTitle(payload.deck?.documentTitle || payload.document?.title || "");
         setGoal(payload.deck?.goal || payload.document?.goal || "");
         setStatusMessage(describeWorkspaceStatus(payload));
+        void loadOperatorReport();
       } catch {
         // Browser storage remains a local fallback if the server adapter is unavailable.
       }
     }
 
     loadServerSession();
+    void loadOperatorReport();
     return () => {
       cancelled = true;
     };
@@ -170,6 +173,7 @@ export function StudyWorkspace() {
         }
       });
       setStatusMessage(describeWorkspaceStatus(payload));
+      await loadOperatorReport();
     } catch {
       // The last visible status stays in place until polling succeeds again.
     }
@@ -245,6 +249,7 @@ export function StudyWorkspace() {
       });
       setUploadStatus(buildProcessingBadge(payload));
       setStatusMessage(describeWorkspaceStatus(payload));
+      void loadOperatorReport();
     } catch (caughtError) {
       setError(
         caughtError instanceof Error
@@ -293,6 +298,7 @@ export function StudyWorkspace() {
       });
       setUploadStatus(buildProcessingBadge(payload));
       setStatusMessage(describeWorkspaceStatus(payload));
+      void loadOperatorReport();
     } catch (caughtError) {
       setError(
         caughtError instanceof Error
@@ -499,6 +505,19 @@ export function StudyWorkspace() {
     }
   }
 
+  async function loadOperatorReport() {
+    try {
+      const response = await fetch("/api/operations/report", { method: "GET" });
+      if (!response.ok) {
+        return;
+      }
+      const payload = await response.json();
+      setOperatorReport(payload.report || null);
+    } catch {
+      // Operational visibility is additive; the study flow remains usable if it is unavailable.
+    }
+  }
+
   const busy = isSubmitting || isPending;
   const visibleUploadStatus = buildProcessingBadge(workspaceState) || uploadStatus;
   const workspaceView = resolveWorkspaceView(workspaceState, Boolean(visibleDeck && !isPreview));
@@ -667,6 +686,8 @@ export function StudyWorkspace() {
               <em>{shell.persistenceLabel}</em>
             </div>
           </div>
+
+          <OperatorReportPanel report={operatorReport} />
         </div>
       </section>
 
@@ -930,6 +951,50 @@ function DocumentStatePanel({ busy, onRetry, workspaceState, workspaceView }) {
   );
 }
 
+function OperatorReportPanel({ report }) {
+  const totals = report?.totals || {};
+  const latency = report?.latency || {};
+  const latestEvents = Array.isArray(report?.latestEvents) ? report.latestEvents.slice(0, 5) : [];
+
+  return (
+    <section className="ops-panel">
+      <div className="ops-panel-head">
+        <div>
+          <p className="eyebrow">Operations</p>
+          <h2>Health report</h2>
+        </div>
+        <span>{report?.generatedAt ? formatResumeTime(report.generatedAt) : "No events"}</span>
+      </div>
+
+      <div className="ops-metrics">
+        <Metric label="Events" value={totals.eventCount || 0} />
+        <Metric label="Failures" value={totals.failureEventCount || 0} />
+        <Metric
+          label="First feed"
+          value={formatLatency(latency.timeToFirstFeedMs)}
+        />
+        <Metric
+          label="Spend"
+          value={formatUsd(totals.estimatedSpendUsd || 0)}
+        />
+      </div>
+
+      <div className="ops-event-list">
+        {latestEvents.length ? (
+          latestEvents.map((event) => (
+            <div className={`ops-event ${event.status}`} key={event.id}>
+              <span>{formatDocumentStatus(event.eventName)}</span>
+              <em>{formatLatency(event.latencyMs)}</em>
+            </div>
+          ))
+        ) : (
+          <p>No operational events have been recorded yet.</p>
+        )}
+      </div>
+    </section>
+  );
+}
+
 function isRecoverableWorkspace(workspaceState) {
   const recovery = workspaceState?.recovery || workspaceState?.document?.recovery;
   if (recovery) {
@@ -1137,5 +1202,22 @@ function formatResumeTime(value) {
 function formatDocumentStatus(status) {
   return String(status || "")
     .replace(/_/g, " ")
+    .replace(/\./g, " ")
     .replace(/\b\w/g, (letter) => letter.toUpperCase());
+}
+
+function formatLatency(value) {
+  if (value == null || value === "" || !Number.isFinite(Number(value))) {
+    return "n/a";
+  }
+  const ms = Number(value);
+  return ms >= 1000 ? `${(ms / 1000).toFixed(1)}s` : `${Math.round(ms)}ms`;
+}
+
+function formatUsd(value) {
+  const amount = Number(value);
+  if (!Number.isFinite(amount)) {
+    return "$0.0000";
+  }
+  return `$${amount.toFixed(amount >= 0.01 ? 2 : 4)}`;
 }

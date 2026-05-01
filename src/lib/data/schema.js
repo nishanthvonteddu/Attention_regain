@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
 
-export const DATA_MODEL_VERSION = 5;
+export const DATA_MODEL_VERSION = 6;
 
 export const SOURCE_KINDS = Object.freeze(["paste", "file", "pdf"]);
 export const DOCUMENT_STATUSES = Object.freeze([
@@ -94,6 +94,9 @@ export function normalizeJsonStore(input = {}) {
     studySessions: Array.isArray(input.studySessions) ? input.studySessions : [],
     studyCards: Array.isArray(input.studyCards) ? input.studyCards : [],
     studyInteractions: Array.isArray(input.studyInteractions) ? input.studyInteractions : [],
+    observabilityEvents: Array.isArray(input.observabilityEvents)
+      ? input.observabilityEvents
+      : [],
     migrations: Array.isArray(input.migrations) ? input.migrations : [],
   };
 }
@@ -127,6 +130,10 @@ export function createEmptyJsonStore() {
       },
       {
         id: "0007_learning_loop_progress",
+        appliedAt: nowIso(),
+      },
+      {
+        id: "0008_observability_cost_tracking",
         appliedAt: nowIso(),
       },
     ],

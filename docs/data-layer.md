@@ -106,6 +106,13 @@ During the learning loop, the same ordered events produce `deck.progress`,
 bookmark signal, `set_confidence=review` is the weak-card signal, and
 `set_confidence=locked` is the learned-card signal.
 
+### observability_events
+
+Append-only product event trail for MVP operations. Events are owner-scoped and
+can point to a document, processing job, or study session. They store named
+upload, parse, generation, retry, failure, latency, and cost signals without
+copying private source text into logs.
+
 ## Status Transitions
 
 Document status:
@@ -193,6 +200,12 @@ Migration `0007_learning_loop_progress.sql` adds:
 - card/type interaction indexes for latest learning-state folds
 - document/status/sequence card indexes for progress and queue reads
 
+Migration `0008_observability_cost_tracking.sql` adds:
+
+- `observability_events` for owner-scoped product health signals
+- document and created-at indexes for support/debugging views
+- stage/status indexes for failure and latency review
+
 Rollout order:
 
 1. Create owner table and document tables.
@@ -207,6 +220,7 @@ Rollout order:
 10. Add chunk retrieval metadata before grounded generation hardening.
 11. Add resume-state indexes before comeback-later feed loading ships.
 12. Add learning-loop indexes before progress summaries and weak-card queues ship.
+13. Add observability events before MVP operator reporting ships.
 
 Rollback expectation: Day 03 migrations are reversible before production data is
 loaded. After real user data exists, rollback should be a forward migration that
@@ -233,6 +247,7 @@ Repository responsibilities:
 - Store documents, chunks, sessions, cards, and interactions.
 - Store extracted page text and parser diagnostics before generation.
 - Store background job payloads, attempts, and dead-letter state.
+- Store append-only operational events for latency, failure, and cost review.
 - Select the last active document from document, session, and interaction
   recency instead of browser-local feed memory.
 - Rebuild ready decks and per-card feedback from persisted cards and

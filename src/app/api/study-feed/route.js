@@ -20,6 +20,7 @@ const DEFAULT_GOAL = "stay close to the material when attention slips";
 
 export async function POST(request) {
   try {
+    const requestStartedAt = Date.now();
     const session = readProductSessionFromCookieHeader(request.headers.get("cookie"));
     const repository = getDefaultStudyRepository();
     if (!requestHasAuthenticatedSession(request.headers.get("cookie"))) {
@@ -100,6 +101,16 @@ export async function POST(request) {
       });
 
       scheduleDocumentProcessingJob({ jobId: job.id, repository });
+      await recordRouteEvent(repository, {
+        eventName: "generation.retry_queued",
+        stage: "queue",
+        status: "queued",
+        userId: session.user.id,
+        documentId: retryDocumentId,
+        jobId: job.id,
+        latencyMs: Date.now() - requestStartedAt,
+        payload: { maxAttempts: DOCUMENT_PROCESSING_MAX_ATTEMPTS },
+      });
 
       return Response.json(
         {
@@ -161,6 +172,19 @@ export async function POST(request) {
     });
 
     scheduleDocumentProcessingJob({ jobId: job.id, repository });
+    await recordRouteEvent(repository, {
+      eventName: "generation.queued",
+      stage: "queue",
+      status: "queued",
+      userId: session.user.id,
+      documentId: document.id,
+      jobId: job.id,
+      latencyMs: Date.now() - requestStartedAt,
+      payload: {
+        sourceKind: source.sourceKind,
+        uploadDocumentId: uploadDocumentId || "",
+      },
+    });
 
     return Response.json(
       {
@@ -179,6 +203,18 @@ export async function POST(request) {
       },
       { status: 500 },
     );
+  }
+}
+
+async function recordRouteEvent(repository, input) {
+  if (typeof repository?.recordProductEvent !== "function") {
+    return null;
+  }
+
+  try {
+    return await repository.recordProductEvent(input);
+  } catch {
+    return null;
   }
 }
 

@@ -1057,6 +1057,101 @@ textarea:focus-visible {
   font-size: 0.95rem;
 }
 
+.ops-panel {
+  margin-top: 28px;
+  padding-top: 22px;
+  border-top: 1px solid var(--line);
+}
+
+.ops-panel-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: flex-start;
+}
+
+.ops-panel h2 {
+  margin: 8px 0 0;
+  color: #241d18;
+  font-size: 1.15rem;
+}
+
+.ops-panel-head span {
+  color: #756a5f;
+  font-size: 0.82rem;
+  line-height: 1.5;
+  text-align: right;
+}
+
+.ops-metrics {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  margin-top: 16px;
+}
+
+.ops-metrics .metric {
+  min-width: 0;
+  border-color: rgba(23, 18, 15, 0.1);
+  background: rgba(255, 255, 255, 0.5);
+}
+
+.ops-metrics .metric label {
+  color: #76695d;
+}
+
+.ops-metrics .metric strong {
+  color: #241d18;
+  font-size: 1.08rem;
+}
+
+.ops-event-list {
+  display: grid;
+  gap: 8px;
+  margin-top: 14px;
+}
+
+.ops-event-list p {
+  margin: 0;
+  color: #756a5f;
+  font-size: 0.92rem;
+  line-height: 1.6;
+}
+
+.ops-event {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  align-items: center;
+  padding: 10px 12px;
+  border-radius: 16px;
+  border: 1px solid rgba(23, 18, 15, 0.08);
+  background: rgba(255, 255, 255, 0.44);
+}
+
+.ops-event.failed {
+  border-color: rgba(217, 108, 63, 0.2);
+  background: rgba(217, 108, 63, 0.08);
+}
+
+.ops-event span,
+.ops-event em {
+  overflow-wrap: anywhere;
+  color: #4a4037;
+  font-size: 0.78rem;
+  line-height: 1.35;
+}
+
+.ops-event span {
+  font-weight: 700;
+}
+
+.ops-event em {
+  flex: 0 0 auto;
+  color: #807266;
+  font-style: normal;
+}
+
 @media (max-width: 1080px) {
   .shell {
     grid-template-columns: 1fr;
