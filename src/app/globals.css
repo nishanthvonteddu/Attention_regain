@@ -32,8 +32,7 @@ body {
   margin: 0;
   min-height: 100vh;
   background:
-    radial-gradient(circle at 12% 18%, rgba(217, 108, 63, 0.22), transparent 28%),
-    radial-gradient(circle at 82% 10%, rgba(56, 89, 76, 0.16), transparent 22%),
+    linear-gradient(135deg, rgba(41, 88, 70, 0.12), transparent 36%),
     linear-gradient(180deg, #f8f2e8 0%, #f2e9da 54%, #ece1d2 100%);
   color: var(--ink);
   font-family: var(--font-sans);
@@ -125,6 +124,7 @@ textarea:focus-visible {
 }
 
 .toolbar-copy {
+  min-width: 0;
   display: grid;
   gap: 6px;
 }
@@ -141,6 +141,7 @@ textarea:focus-visible {
 }
 
 .toolbar-actions {
+  min-width: 0;
   display: flex;
   flex-wrap: wrap;
   justify-content: flex-end;
@@ -153,9 +154,8 @@ textarea:focus-visible {
   top: -22px;
   width: 112px;
   height: 112px;
-  border-radius: 999px;
-  background: var(--accent-soft);
-  filter: blur(32px);
+  border-radius: 0 34px 0 80px;
+  background: linear-gradient(135deg, rgba(217, 108, 63, 0.2), rgba(41, 88, 70, 0.08));
 }
 
 .eyebrow {
@@ -171,9 +171,9 @@ textarea:focus-visible {
   margin: 16px 0 0;
   max-width: 14ch;
   font-family: var(--font-serif);
-  font-size: clamp(2.85rem, 6vw, 4.35rem);
+  font-size: clamp(2.65rem, 4rem, 4rem);
   line-height: 0.92;
-  letter-spacing: -0.06em;
+  letter-spacing: 0;
 }
 
 .lede {
@@ -270,6 +270,7 @@ textarea:focus-visible {
 .field input,
 .field textarea {
   width: 100%;
+  min-width: 0;
   border: 1px solid var(--line);
   border-radius: 22px;
   background: #fff9f1;
@@ -302,6 +303,7 @@ textarea:focus-visible {
 }
 
 .dropzone {
+  display: block;
   border: 1px dashed rgba(23, 18, 15, 0.18);
   border-radius: 24px;
   background: #fff9f1;
@@ -389,12 +391,17 @@ textarea:focus-visible {
 .primary-button,
 .secondary-button,
 .ghost-button {
+  min-height: 44px;
+  max-width: 100%;
   border-radius: 999px;
   padding: 13px 20px;
   text-transform: uppercase;
   letter-spacing: 0.22em;
   font-size: 0.76rem;
   font-weight: 700;
+  text-align: center;
+  text-decoration: none;
+  overflow-wrap: anywhere;
 }
 
 .primary-button {
@@ -462,7 +469,7 @@ textarea:focus-visible {
   inset: 0 auto auto 0;
   width: 100%;
   height: 170px;
-  background: radial-gradient(circle at top, rgba(217, 108, 63, 0.24), transparent 68%);
+  background: linear-gradient(180deg, rgba(217, 108, 63, 0.18), transparent 78%);
 }
 
 .feed-frame {
@@ -500,10 +507,11 @@ textarea:focus-visible {
   margin: 14px 0 0;
   max-width: 24ch;
   font-family: var(--font-serif);
-  font-size: clamp(1.95rem, 4vw, 2.5rem);
+  font-size: clamp(1.95rem, 2.35rem, 2.35rem);
   line-height: 1.03;
-  letter-spacing: -0.05em;
+  letter-spacing: 0;
   color: #f7efe2;
+  overflow-wrap: anywhere;
 }
 
 .feed-goal {
@@ -520,6 +528,10 @@ textarea:focus-visible {
   gap: 18px;
   align-items: flex-start;
   flex-wrap: wrap;
+}
+
+.feed-summary > div {
+  min-width: 0;
 }
 
 .feed-summary p:last-child {
@@ -600,6 +612,7 @@ textarea:focus-visible {
   font-size: 1.35rem;
   line-height: 1;
   color: #f8f0e4;
+  overflow-wrap: anywhere;
 }
 
 .document-strip {
@@ -764,9 +777,10 @@ textarea:focus-visible {
   margin: 0;
   max-width: 24ch;
   font-family: var(--font-serif);
-  font-size: clamp(2rem, 5vw, 3.1rem);
+  font-size: clamp(2rem, 2.8rem, 2.8rem);
   line-height: 1;
-  letter-spacing: -0.04em;
+  letter-spacing: 0;
+  overflow-wrap: anywhere;
 }
 
 .state-panel p {
@@ -851,7 +865,8 @@ textarea:focus-visible {
   font-family: var(--font-serif);
   font-size: 1.45rem;
   line-height: 1.08;
-  letter-spacing: -0.04em;
+  letter-spacing: 0;
+  overflow-wrap: anywhere;
 }
 
 .feed-card > p {
@@ -948,6 +963,8 @@ textarea:focus-visible {
 }
 
 .pill {
+  min-height: 40px;
+  max-width: 100%;
   border-radius: 999px;
   border: 1px solid rgba(23, 18, 15, 0.1);
   padding: 10px 14px;
@@ -957,6 +974,8 @@ textarea:focus-visible {
   font-size: 0.7rem;
   font-weight: 700;
   color: #4f453c;
+  text-decoration: none;
+  overflow-wrap: anywhere;
 }
 
 .pill.active-green {
@@ -1013,6 +1032,10 @@ textarea:focus-visible {
   );
   box-shadow: var(--shadow);
   backdrop-filter: blur(16px);
+}
+
+.entry-card .hero {
+  max-width: 18ch;
 }
 
 .entry-grid {
@@ -1181,7 +1204,42 @@ textarea:focus-visible {
 
   .panel-inner,
   .feed-header {
-    padding: 20px;
+    padding: 18px;
+  }
+
+  .panel,
+  .feed-shell,
+  .feed-frame,
+  .feed-card,
+  .state-panel,
+  .entry-card {
+    border-radius: 22px;
+  }
+
+  .hero {
+    max-width: 100%;
+    font-size: 2.65rem;
+    line-height: 1;
+  }
+
+  .lede,
+  .status p,
+  .feed-goal {
+    line-height: 1.62;
+  }
+
+  .toolbar-actions,
+  .actions,
+  .card-actions {
+    width: 100%;
+  }
+
+  .toolbar-actions > *,
+  .actions > *,
+  .actions form,
+  .actions button,
+  .actions a {
+    width: 100%;
   }
 
   .feed-frame {
@@ -1194,6 +1252,29 @@ textarea:focus-visible {
 
   .feed-card {
     padding: 18px;
+  }
+
+  .feed-card-head,
+  .feed-summary,
+  .ops-panel-head,
+  .file-pill {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .feed-title {
+    max-width: 100%;
+    font-size: 2rem;
+  }
+
+  .tag,
+  .learning-state-row span,
+  .pill,
+  .primary-button,
+  .secondary-button,
+  .ghost-button,
+  .chip-button {
+    letter-spacing: 0.12em;
   }
 
   .document-strip,
@@ -1214,7 +1295,12 @@ textarea:focus-visible {
   }
 
   .metric {
-    min-width: calc(50% - 6px);
+    min-width: 0;
+  }
+
+  .metric-row {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
   .entry-shell {
