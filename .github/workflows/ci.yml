@@ -8,7 +8,7 @@ on:
       - "day-*/*"
 
 jobs:
-  validate:
+  release-quality-gate:
     runs-on: ubuntu-latest
     timeout-minutes: 15
 
@@ -30,14 +30,5 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
-      - name: Validate environment contract
-        run: node scripts/validate-env.mjs --mode=ci
-
-      - name: Lint repository
-        run: bash scripts/lint.sh
-
-      - name: Build application
-        run: bash scripts/build.sh
-
-      - name: Run automated tests
-        run: bash scripts/test.sh
+      - name: Run release quality gate
+        run: bash scripts/check.sh

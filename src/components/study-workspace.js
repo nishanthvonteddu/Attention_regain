@@ -581,6 +581,7 @@ export function StudyWorkspace() {
             <label className="field">
               <span className="field-label">Document title</span>
               <input
+                autoComplete="off"
                 value={title}
                 onChange={(event) => setTitle(event.target.value)}
                 placeholder="Paper title, exam notes, interview packet"
@@ -590,6 +591,7 @@ export function StudyWorkspace() {
             <label className="field">
               <span className="field-label">Study goal</span>
               <input
+                autoComplete="off"
                 value={goal}
                 onChange={(event) => setGoal(event.target.value)}
                 placeholder="Prepare for interviews, revise for an exam, explain a paper"
@@ -598,21 +600,24 @@ export function StudyWorkspace() {
 
             <label className="field">
               <div className="field-meta">
-                <span className="field-label">Source text</span>
+                <span className="field-label" id="source-text-label">Source text</span>
                 <span className="field-label">{sourceText.length}/80000</span>
               </div>
               <textarea
+                aria-describedby="source-text-helper"
+                aria-labelledby="source-text-label"
+                maxLength={80000}
                 value={sourceText}
                 onChange={(event) => setSourceText(event.target.value)}
                 placeholder="Paste study material here, or leave this empty and upload a PDF below."
               />
-              <p className="helper">
+              <p className="helper" id="source-text-helper">
                 Paste text for the fastest loop, or upload a PDF/TXT file below.
               </p>
             </label>
 
             <div className="field">
-              <span className="field-label">Upload file</span>
+              <span className="field-label" id="upload-file-label">Upload file</span>
               <label className="dropzone">
                 <strong>Drop a PDF or text file here</strong>
                 <span>
@@ -621,6 +626,7 @@ export function StudyWorkspace() {
                 </span>
                 <span className="chip-button">Choose file</span>
                 <input
+                  aria-labelledby="upload-file-label"
                   hidden
                   type="file"
                   accept=".pdf,.txt,.md,.text"
@@ -640,7 +646,7 @@ export function StudyWorkspace() {
                 </div>
               ) : null}
               {visibleUploadStatus ? (
-                <div className="upload-status">
+                <div className="upload-status" aria-live="polite">
                   <strong>{visibleUploadStatus.label}</strong>
                   <span>{visibleUploadStatus.detail}</span>
                 </div>
@@ -880,7 +886,7 @@ function DocumentStatusStrip({ workspaceState }) {
   const view = resolveWorkspaceView(workspaceState, Boolean(workspaceState?.deck));
 
   return (
-    <div className={`document-strip ${view.kind}`}>
+    <div className={`document-strip ${view.kind}`} aria-live="polite">
       <div>
         <strong>{view.label}</strong>
         <span>{view.detail}</span>
@@ -922,7 +928,7 @@ function DocumentStatePanel({ busy, onRetry, workspaceState, workspaceView }) {
             ) : null}
           </div>
 
-          <div className="state-copy">
+          <div className="state-copy" aria-live="polite">
             <strong>{workspaceView.label}</strong>
             <p>{describeWorkspaceStatus(workspaceState)}</p>
             {recovery ? (
