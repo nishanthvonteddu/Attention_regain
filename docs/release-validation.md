@@ -60,4 +60,4 @@ If a release candidate fails validation after merge:
 4. If data migrations were included, inspect the corresponding `db/migrations/` file and decide whether the local JSON store or production database needs manual restoration from backup.
 5. Record the failed check, rollback commit, and follow-up issue in GitHub before retrying release.
 
-For Day 15 production rollback, prefer restoring the previous app and worker deployment together so API and background job contracts stay aligned.
+For Day 15 production rollback, prefer restoring the previous app and worker deployment together so API and background job contracts stay aligned. The hosted production readiness contract and smoke-test checklist live in [production-readiness.md](./production-readiness.md).
