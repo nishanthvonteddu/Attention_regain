@@ -39,6 +39,8 @@ The scheduled automation currently validates the study flow against three local 
 
 These files stay outside the repository and are only used for local regression checks.
 
+The full release-candidate checklist, fixture expectations, and rollback procedure live in [release-validation.md](./release-validation.md).
+
 ## AWS Inventory Assumptions
 
 These resources are not fully implemented yet, but the MVP plan assumes this shape:
@@ -57,7 +59,7 @@ Day 1 documents the inventory so later implementation can plug into a known targ
 
 1. Confirm the earliest incomplete day from GitHub milestones and issues.
 2. Create a review branch using `day-<number>/<slug>`.
-3. Implement only the active child issue or tightly related Day 1 scope.
+3. Implement only the active child issue or tightly related active-day scope.
 4. Run:
    ```bash
    bash scripts/check.sh
@@ -68,6 +70,6 @@ Day 1 documents the inventory so later implementation can plug into a known targ
 
 ## CI Expectations
 
-- CI runs the same environment validation, lint, build, and test contract as local development.
-- A broken validation step blocks merge.
+- CI runs `bash scripts/check.sh` through the `release-quality-gate` job so the review branch uses the same environment validation, lint, build, and test contract as local development.
+- A broken `release-quality-gate` blocks merge.
 - If CI fails, fix the branch first. Do not merge with known red checks.
