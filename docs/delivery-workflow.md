@@ -39,6 +39,6 @@ Use the repository scripts as the canonical local entrypoints:
 
 ## CI And Broken Checks
 
-- The GitHub Actions workflow in `.github/workflows/ci.yml` runs the same validation contract used locally.
+- The GitHub Actions workflow in `.github/workflows/ci.yml` runs `bash scripts/check.sh` in the `release-quality-gate` job, matching the local release validation contract.
 - A review branch is not ready for merge until CI is green.
 - If any check fails, fix the underlying issue on the same review branch, rerun the local scripts, and push the repair before requesting merge again.
