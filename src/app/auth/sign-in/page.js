@@ -6,9 +6,10 @@ import { getServerProductShellBootstrap } from "../../../lib/auth/session.server
 import { isAuthenticatedProductSession } from "../../../lib/auth/session-shared.js";
 
 export default async function SignInPage({ searchParams }) {
+  const params = await searchParams;
   const bootstrap = await getServerProductShellBootstrap();
   const requestedRedirect = normalizeRedirectPath(
-    searchParams?.redirect,
+    params?.redirect,
     bootstrap.auth.routes.protectedHomePath,
   );
 
@@ -16,7 +17,7 @@ export default async function SignInPage({ searchParams }) {
     redirect(requestedRedirect);
   }
 
-  const errorCode = typeof searchParams?.error === "string" ? searchParams.error : "";
+  const errorCode = typeof params?.error === "string" ? params.error : "";
   const errorMessage = getAuthErrorMessage(errorCode);
   const hostedUiStartPath = `/auth/sign-in/start?redirect=${encodeURIComponent(requestedRedirect)}`;
 
@@ -107,4 +108,3 @@ export default async function SignInPage({ searchParams }) {
     </main>
   );
 }
-
