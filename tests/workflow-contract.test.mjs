@@ -33,8 +33,6 @@ test("workflow docs define branch and delivery expectations", async () => {
   assert.match(workflowDoc, /Do not work directly on `main`\./);
   assert.match(workflowDoc, /CI is green/);
   assert.match(setupDoc, /AWS Inventory Assumptions/);
-  assert.match(ciWorkflow, /node scripts\/validate-env\.mjs --mode=ci/);
-  assert.match(ciWorkflow, /bash scripts\/lint\.sh/);
-  assert.match(ciWorkflow, /bash scripts\/build\.sh/);
-  assert.match(ciWorkflow, /bash scripts\/test\.sh/);
+  assert.match(ciWorkflow, /release-quality-gate/);
+  assert.match(ciWorkflow, /bash scripts\/check\.sh/);
 });
