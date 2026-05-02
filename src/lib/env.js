@@ -25,6 +25,18 @@ export const ENV_CONTRACT = [
     scope: "server",
   },
   {
+    name: "PRODUCTION_APP_URL",
+    scope: "server",
+  },
+  {
+    name: "PRODUCTION_DEPLOYMENT_TARGET",
+    scope: "server",
+  },
+  {
+    name: "PRODUCTION_WORKER_RUNTIME",
+    scope: "server",
+  },
+  {
     name: "ENABLE_LIVE_GENERATION",
     scope: "server",
   },
@@ -184,6 +196,7 @@ export function getEnvironmentReport(env = process.env) {
   const generation = getTextGenerationConfig(env);
   const fatalIssues = [...generation.issues];
   const warnings = [...generation.warnings];
+  const productionRuntime = String(env.ATTENTION_REGAIN_ENV || "").trim() === "production";
 
   if (flags.retrievalPipeline) {
     const missing = missingKeys(env, [
@@ -231,6 +244,19 @@ export function getEnvironmentReport(env = process.env) {
     if (missing.length) {
       fatalIssues.push(
         `ENABLE_DATABASE is true but these values are missing: ${missing.join(", ")}.`,
+      );
+    }
+  }
+
+  if (productionRuntime) {
+    const missing = missingKeys(env, [
+      "PRODUCTION_APP_URL",
+      "PRODUCTION_DEPLOYMENT_TARGET",
+      "PRODUCTION_WORKER_RUNTIME",
+    ]);
+    if (missing.length) {
+      fatalIssues.push(
+        `ATTENTION_REGAIN_ENV is production but these values are missing: ${missing.join(", ")}.`,
       );
     }
   }
