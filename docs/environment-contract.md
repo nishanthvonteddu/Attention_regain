@@ -21,6 +21,9 @@ These variables must stay server-side. They are consumed by API routes, backgrou
 | Variable | Required Now | Required When | Notes |
 | --- | --- | --- | --- |
 | `ATTENTION_REGAIN_ENV` | No | Never | Environment label such as `local`, `ci`, `staging`, or `production`. |
+| `PRODUCTION_APP_URL` | No | `ATTENTION_REGAIN_ENV=production` | Canonical HTTPS origin for hosted smoke checks and Cognito callback review. |
+| `PRODUCTION_DEPLOYMENT_TARGET` | No | `ATTENTION_REGAIN_ENV=production` | Hosting target for the web app, such as App Runner or Amplify Hosting. |
+| `PRODUCTION_WORKER_RUNTIME` | No | `ATTENTION_REGAIN_ENV=production` | Hosted background runtime, such as Lambda or an App Runner worker. |
 | `ENABLE_LIVE_GENERATION` | No | Never | Explicitly turns on model-backed card generation. If omitted, the app enables live generation automatically only when a text generation key is present. |
 | `NVIDIA_TEXT_API_KEY` | No | `ENABLE_LIVE_GENERATION=true` | Preferred server-only key for text generation. |
 | `NVIDIA_TEXT_MODEL` | No | `ENABLE_LIVE_GENERATION=true` | Preferred text generation model id. |
@@ -72,7 +75,11 @@ The Day 1 validation contract has two layers:
    - checks the documented contract
    - rejects impossible flag combinations
    - catches missing required values when a feature is explicitly enabled
-2. runtime fallback in the background document pipeline
+2. `node scripts/validate-production-readiness.mjs`
+   - checks the production environment uses the hosted app URL, deployment target, worker runtime, AWS services, database, and retrieval flags required for Day 15
+   - prints only non-secret wiring outputs such as callback URLs and configured service names
+   - can run hosted HTTP smoke checks with `--http` after the app is deployed
+3. runtime fallback in the background document pipeline
    - if live generation is disabled or unconfigured, the worker uses heuristic card generation
    - if live generation is explicitly enabled but misconfigured, the worker still falls back and records a warning instead of silently pretending the model ran
 
@@ -87,5 +94,7 @@ The Day 1 validation contract has two layers:
   - expected result: no failure during the local MVP phase
 - Missing AWS or database settings after those feature flags are enabled:
   - expected result: validation failure before merge or deployment
+- Missing hosted deployment settings while `ATTENTION_REGAIN_ENV=production`:
+  - expected result: validation failure in `scripts/validate-env.mjs` and `scripts/validate-production-readiness.mjs`
 - Partial Cognito scaffold values while `ENABLE_AWS_SERVICES=false`:
   - expected result: local preview mode with an explicit warning instead of a silent half-configured auth shell
