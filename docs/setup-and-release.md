@@ -39,7 +39,7 @@ The scheduled automation currently validates the study flow against three local 
 
 These files stay outside the repository and are only used for local regression checks.
 
-The full release-candidate checklist, fixture expectations, and rollback procedure live in [release-validation.md](./release-validation.md).
+The full release-candidate checklist, fixture expectations, and rollback procedure live in [release-validation.md](./release-validation.md). Production AWS readiness, deployment wiring, and hosted smoke checks live in [production-readiness.md](./production-readiness.md).
 
 ## AWS Inventory Assumptions
 
@@ -53,7 +53,7 @@ These resources are not fully implemented yet, but the MVP plan assumes this sha
 - `AWS Amplify Hosting` or `AWS App Runner` for deployment
 - `CloudWatch` for logs and operational visibility
 
-Day 1 documents the inventory so later implementation can plug into a known target instead of redefining infrastructure mid-stream.
+Day 1 documents the inventory so later implementation can plug into a known target instead of redefining infrastructure mid-stream. Day 15 turns that inventory into an explicit production readiness contract in [production-readiness.md](./production-readiness.md) and `scripts/validate-production-readiness.mjs`.
 
 ## Release Workflow
 
