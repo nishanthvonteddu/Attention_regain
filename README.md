@@ -42,7 +42,7 @@ bash scripts/check.sh
 
 `scripts/check.sh` runs environment validation, repository hygiene checks, the production build, and the automated tests in the same order expected for a review branch.
 
-The release-candidate checklist, fixture PDF expectations, CI gate, and rollback notes live in [docs/release-validation.md](./docs/release-validation.md).
+The release-candidate checklist, fixture PDF expectations, CI gate, and rollback notes live in [docs/release-validation.md](./docs/release-validation.md). Hosted AWS release readiness and production smoke checks live in [docs/production-readiness.md](./docs/production-readiness.md).
 
 ## Delivery Workflow
 
