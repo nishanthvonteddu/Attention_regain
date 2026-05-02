@@ -15,7 +15,8 @@ The input is a paper, notes, or another reading source. The output is a mobile-f
   - recall prompts
   - application prompts
   - pitfall cards
-- Browser-local session persistence
+- Server-backed local JSON persistence, resume state, learning actions, and operational events
+- Authenticated local preview shell with future Cognito integration points
 
 ## Local Run
 
@@ -40,6 +41,8 @@ bash scripts/check.sh
 ```
 
 `scripts/check.sh` runs environment validation, repository hygiene checks, the production build, and the automated tests in the same order expected for a review branch.
+
+The release-candidate checklist, fixture PDF expectations, CI gate, and rollback notes live in [docs/release-validation.md](./docs/release-validation.md).
 
 ## Delivery Workflow
 
@@ -79,6 +82,7 @@ The app now uses NVIDIA's OpenAI-compatible chat completions endpoint and falls 
 - `src/app/page.js`
 - `src/app/api/study-feed/route.js`
 - `src/lib/documents/pdf-parser.js`
+- `docs/release-validation.md`
 - `README.md`
 
 ## Product Boundary
@@ -86,10 +90,9 @@ The app now uses NVIDIA's OpenAI-compatible chat completions endpoint and falls 
 This version is intentionally narrow:
 
 - one document at a time
-- one user at a time
+- single-user local MVP semantics, with owner-scoped records behind the authenticated shell
 - grounded cards only
-- no auth
-- no database
+- local JSON storage instead of the planned production database
 - no cross-document retrieval
 
 That keeps the validation question clear: if the user is about to open a distraction app, is this feed easy enough to open instead while still reinforcing the material?
